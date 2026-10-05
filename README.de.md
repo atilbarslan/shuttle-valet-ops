@@ -125,7 +125,7 @@ flowchart LR
 
 ## Bildschirmfotos
 
-Die Oberfläche ist auf Türkisch. Die Bildschirme zeigen Demodaten; Telefonnummern und Kennzeichen sind unkenntlich gemacht.
+Die Oberfläche ist auf Türkisch. Die Bildschirmfotos stammen aus der Live-Version, die unter dem Namen Paxroute lief; Name und Logo wurden aus dieser Codebasis entfernt. Sie zeigen Demodaten; Telefonnummern und Kennzeichen sind unkenntlich gemacht.
 
 | | |
 |---|---|

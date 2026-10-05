@@ -122,7 +122,7 @@ flowchart LR
 
 ## Screenshots
 
-The interface is in Turkish. The screens show demo data; phone numbers and licence plates are blurred.
+The interface is in Turkish. The screenshots were taken from the live version, which ran under the Paxroute name; the name and logo were removed from this code base. They show demo data; phone numbers and licence plates are blurred.
 
 | | |
 |---|---|
