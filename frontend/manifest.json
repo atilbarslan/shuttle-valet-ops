@@ -1,0 +1,37 @@
+{
+    "id": "/sofor.html",
+    "name": "Shuttle & Valet Ops Şoför",
+    "short_name": "Shuttle & Valet Ops",
+    "description": "Shuttle & Valet Ops Şoför Paneli - Akıllı Rota Yönetimi",
+    "start_url": "/sofor.html",
+    "display": "standalone",
+    "theme_color": "#DFFF00",
+    "background_color": "#f4f7f6",
+    "orientation": "portrait-primary",
+    "icons": [
+        {
+            "src": "icon-192.png",
+            "sizes": "192x192",
+            "type": "image/png",
+            "purpose": "any"
+        },
+        {
+            "src": "icon-192.png",
+            "sizes": "192x192",
+            "type": "image/png",
+            "purpose": "maskable"
+        },
+        {
+            "src": "icon-512.png",
+            "sizes": "512x512",
+            "type": "image/png",
+            "purpose": "any"
+        },
+        {
+            "src": "icon-512.png",
+            "sizes": "512x512",
+            "type": "image/png",
+            "purpose": "maskable"
+        }
+    ]
+}

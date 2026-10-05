@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="referrer" content="strict-origin-when-cross-origin">
+    <title>Shuttle &amp; Valet Ops | Canlı Takip</title>
+    <!-- Mapbox is the only third-party origin allowed by this CSP -->
+    <!-- Content Security Policy: replace YOUR_DOMAIN with the domain the app is served from
+         (for example app.example.com) so the page may call the API (https://) and the live
+         WebSocket (wss://). The localhost entries are only for local development. -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-eval' https://api.mapbox.com; style-src 'self' 'unsafe-inline' https://api.mapbox.com; connect-src 'self' http://127.0.0.1:8000 ws://127.0.0.1:8000 http://localhost:8000 ws://localhost:8000 https://YOUR_DOMAIN wss://YOUR_DOMAIN https://api.mapbox.com https://events.mapbox.com; img-src 'self' data: blob: https://api.mapbox.com https://*.basemaps.cartocdn.com; worker-src blob:;">
+    <link href="https://api.mapbox.com/mapbox-gl-js/v3.3.0/mapbox-gl.css" rel="stylesheet">
+    <style>
+        @font-face {
+            font-family: 'Inter';
+            src: url('fonts/InterVariable.woff2') format('woff2');
+            font-weight: 100 900;
+            font-style: normal;
+            font-display: swap;
+        }
+        :root {
+            --bg-color: #0d0d12;
+            --surface: rgba(25, 25, 32, 0.85);
+            --surface-2: rgba(0, 0, 0, 0.4);
+            --border: rgba(255, 255, 255, 0.08);
+            --text: #ffffff;
+            --text-2: #8a8f98;
+            --volt: #DFFF00;
+            --blue: #3b82f6;
+            --green: #10b981;
+            --red: #ef4444;
+            --orange: #f59e0b;
+            --radius-lg: 24px;
+            --radius-md: 14px;
+            /* older variable names, kept as aliases */
+            --p: #3b82f6;
+            --bg: #0d0d12;
+        }
+        body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; margin: 0; background-color: var(--bg-color); background-image: radial-gradient(circle at 50% 0%, rgba(59,130,246,0.05), transparent 60%); height: 100vh; display: flex; flex-direction: column; color: var(--text); }
+        #header { padding: 25px 20px; background: var(--surface); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow: 0 10px 40px rgba(0,0,0,0.5); text-align: center; z-index: 1000; border-bottom: 1px solid var(--border); border-radius: 0 0 var(--radius-lg) var(--radius-lg); }
+        #header h2 { margin: 0; font-size: 22px; letter-spacing: -0.5px; color: var(--text); }
+        #header p { margin: 8px 0 0; font-size: 14px; color: var(--text-2); line-height: 1.4; }
+        .etiket { display: inline-block; padding: 5px 12px; border-radius: 20px; font-size: 11px; font-weight: 700; margin-bottom: 10px; background: rgba(255,255,255,0.05); border: 1px solid var(--border); color: var(--text-2); text-transform: uppercase; letter-spacing: 0.5px; }
+        #map-area { flex-grow: 1; width: 100%; z-index: 1; position: relative; }
+        #map { width: 100%; height: 100%; }
+        #footer { padding: 20px; background: var(--surface); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border-top: 1px solid var(--border); z-index: 1000; box-shadow: 0 -10px 40px rgba(0,0,0,0.5); border-radius: var(--radius-lg) var(--radius-lg) 0 0; }
+        .ana-btn { width: 100%; background: var(--blue); color: white; border: none; padding: 18px; border-radius: var(--radius-md); font-weight: 800; font-size: 16px; cursor: pointer; transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); box-shadow: 0 8px 25px rgba(59,130,246,0.3); }
+        .ana-btn:disabled { background: rgba(255,255,255,0.05); color: var(--text-2); cursor: not-allowed; box-shadow: none; border: 1px solid var(--border); }
+        .custom-pin { font-size: 36px; text-align: center; margin-top: -18px; margin-left: -18px; cursor: pointer; }
+        .tam-ekran-mesaj { display: none; flex-direction: column; align-items: center; justify-content: center; height: 100vh; text-align: center; padding: 30px; background: var(--bg-color); background-image: radial-gradient(circle at 50% 50%, rgba(59,130,246,0.05), transparent 70%); box-sizing: border-box; color: var(--text); }
+        .tam-ekran-mesaj h2 { margin-bottom: 10px; font-size: 24px; font-weight: 800; letter-spacing: -0.5px; }
+        .tam-ekran-mesaj p { color: var(--text-2); line-height: 1.5; max-width: 300px; }
+        .canli-eta-kutu { background: rgba(59,130,246,0.1); border: 1px solid rgba(59,130,246,0.25); padding: 25px 20px; border-radius: var(--radius-lg); margin-top: 20px; width: 100%; max-width: 320px; transition: all 0.3s ease; }
+        .canli-eta-kutu span { display: block; font-size: 42px; font-weight: 900; color: var(--blue); margin-top: 10px; text-shadow: 0 0 20px rgba(59,130,246,0.3); }
+        /* === Satisfaction survey === */
+        .anket-kutu { width: 100%; max-width: 340px; margin-top: 24px; text-align: left; }
+        .anket-baslik { font-size: 16px; font-weight: 700; margin-bottom: 4px; text-align: center; }
+        .anket-alt { font-size: 12px; color: var(--text-2); margin: 0 0 16px; text-align: center; line-height: 1.5; }
+        .anket-satir { margin-bottom: 14px; }
+        .anket-soru { font-size: 13px; color: var(--text-2); margin-bottom: 6px; }
+        .anket-yildizlar { display: flex; gap: 6px; }
+        /* Star button: a 44px touch target. Grey when empty, gold when selected. */
+        .anket-yildiz { width: 44px; height: 44px; padding: 0; background: transparent; border: none;
+            cursor: pointer; color: rgba(255,255,255,0.22); transition: color .15s ease, transform .1s ease; }
+        .anket-yildiz:active { transform: scale(0.92); }
+        .anket-yildiz.dolu { color: #eab308; }
+        .anket-yorum { width: 100%; box-sizing: border-box; margin-top: 8px; padding: 12px;
+            background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.12); border-radius: 10px;
+            color: inherit; font-family: inherit; font-size: 14px; resize: vertical; outline: none; }
+        .anket-yorum:focus { border-color: var(--blue); }
+        .anket-sayac { font-size: 11px; color: var(--text-2); text-align: right; margin-top: 4px; }
+        .anket-hata { font-size: 13px; color: #f87171; margin-top: 10px; line-height: 1.5; }
+        .anket-btn { width: 100%; margin-top: 14px; padding: 14px; border: none; border-radius: 10px;
+            background: var(--blue); color: #fff; font-size: 15px; font-weight: 700; cursor: pointer; }
+        .anket-btn:disabled { background: rgba(255,255,255,0.10); color: var(--text-2); cursor: default; }
+        .anket-tesekkur { margin-top: 24px; font-size: 15px; font-weight: 600; }
+        #beklemeKutusu { padding: 20px; background: rgba(245,158,11,0.1); color: #fcd34d; border: 1px solid rgba(245,158,11,0.25); border-radius: 12px; margin-top: 25px; font-size: 15px; font-weight: 600; transition: all 0.5s ease; width: 100%; max-width: 350px; line-height: 1.4; }
+        #ekran-hata { display: none; }
+        .hata-kutu { background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.25); border-radius: var(--radius-lg); padding: 25px; max-width: 320px; width: 100%; }
+        .hata-kutu h3 { color: var(--red); margin-top: 0; }
+        .hata-kutu p { color: var(--text-2); font-size: 14px; line-height: 1.5; margin-bottom: 0; }
+        .durak-secici { background: var(--surface-2); color: var(--text); border: 1px solid var(--border); text-align: left; appearance: auto; }
+        @media (max-width: 768px) {
+            body { padding-bottom: env(safe-area-inset-bottom); padding-top: env(safe-area-inset-top); }
+            #header { padding: 20px 15px; } #header h2 { font-size: 20px; }
+            #footer { padding: 15px; padding-bottom: calc(15px + env(safe-area-inset-bottom)); }
+            .ana-btn { padding: 16px; font-size: 15px; } .tam-ekran-mesaj { padding: 20px; }
+            .canli-eta-kutu { padding: 20px 15px; width: 90%; max-width: none; }
+            #beklemeKutusu { width: 95%; max-width: none; font-size: 14px; }
+        }
+        .plaka-badge { display: inline-block; background-color: var(--volt); color: #000; font-size: 22px; font-weight: 900; letter-spacing: 2px; padding: 8px 20px; border: none; border-radius: 8px; margin-top: 15px; box-shadow: 0 5px 20px rgba(223,255,0,0.3); }
+
+        /* Styles moved out of inline style attributes into classes */
+
+        /* Loading screen, visible at start */
+        .tam-ekran-mesaj.gosterilsin { display: flex; }
+
+        /* Main container (shown by the JS) */
+        #uygulama-arayuzu { display: none; flex-direction: column; height: 100vh; }
+
+        /* Header logo row */
+        .header-logo-satir { display: flex; align-items: center; justify-content: center; gap: 10px; margin-bottom: 14px; }
+        .marka-yazi { font-size: 18px; font-weight: 900; letter-spacing: -0.5px; }
+        .marka-yazi .marka-volt { color: var(--volt); text-shadow: 0 0 10px rgba(223,255,0,0.3); }
+
+        /* Plate, hidden until the JS shows it */
+        #aracPlaka.gizli { display: none; }
+        /* Valet name line: plain informational text, not a highlighted box */
+        .vale-personel { display: none; margin: 6px 0 0; font-size: 15px; font-weight: 600; color: var(--text-primary, #fff); }
+
+        /* Large and medium icons */
+        .buyuk-ikon { color: var(--red); margin-bottom: 15px; display: inline-flex; }
+        .dev-ikon-1 { color: var(--green); margin-bottom: 20px; display: inline-flex; filter: drop-shadow(0 0 20px rgba(16,185,129,0.2)); }
+        .dev-ikon-2 { color: var(--blue); margin-bottom: 10px; display: inline-flex; filter: drop-shadow(0 0 20px rgba(59,130,246,0.2)); }
+        .orta-ikon { color: var(--text-2); margin-bottom: 15px; display: inline-flex; }
+
+        /* Stop picker (shown by the JS) */
+        #durak-area { display: none; padding: 20px; flex-grow: 1; align-items: center; justify-content: center; flex-direction: column; background: var(--bg-color); }
+        .durak-secim-metni { text-align: center; color: var(--text-2); margin-bottom: 25px; font-size: 15px; line-height: 1.5; }
+
+        /* Info area */
+        .bilgi-alani { margin-bottom: 12px; font-size: 13px; color: var(--text-2); text-align: center; font-weight: 500; }
+
+        /* Queue box content */
+        .sira-baslik { font-size: 13px; color: var(--text-2); text-transform: uppercase; font-weight: bold; }
+        .sira-alt-bilgi { font-size: 14px; color: var(--text-2); margin-top: 10px; font-weight: 600; }
+
+        /* Classes for content built by the JS */
+        .yesil-onay { color: var(--green); font-size: 14px; font-weight: bold; }
+        .harita-link { display: inline-block; margin-top: 10px; padding: 8px 16px; background: rgba(59,130,246,0.15); color: var(--blue); text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 13px; border: 1px solid rgba(59,130,246,0.3); }
+        .yesil-mini { color: var(--green); }
+        .gri-mini { color: var(--text-2); }
+        .hareket-saati-baslik { font-size: 16px; color: var(--text-2); margin-bottom: 5px; }
+        .hareket-saati-deger { font-size: 42px; font-weight: 900; color: var(--blue); text-shadow: 0 0 20px rgba(59,130,246,0.3); }
+        .canli-sure-buyuk { font-size: 42px; font-weight: 900; }
+        .canli-sure-cok-buyuk { font-size: 48px; font-weight: 900; }
+        .servis-hazir-ikon { font-size: 24px; display: block; margin-bottom: 10px; }
+
+        /* KVKK privacy notice and consent box (shown before any location is requested) */
+        #kvkkEkran { padding: 24px 20px; justify-content: flex-start; overflow-y: auto; text-align: left; }
+        #kvkkEkran .kvkk-govde { width: 100%; max-width: 460px; margin: 0 auto; }
+        #kvkkEkran h2 { font-size: 21px; margin: 18px 0 6px; text-align: left; }
+        .kvkk-alt-baslik { color: var(--text-2); font-size: 14px; margin: 0 0 18px; line-height: 1.5; }
+        .kvkk-kutu { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md);
+                     padding: 16px 18px; margin-bottom: 14px; }
+        .kvkk-kutu p { margin: 0 0 10px; font-size: 14px; color: #d6d8dd; line-height: 1.55; }
+        .kvkk-kutu p:last-child { margin-bottom: 0; }
+        .kvkk-sorumlu { font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-2);
+                        font-weight: 700; margin-bottom: 6px; display: block; }
+        .kvkk-unvan { font-size: 16px; font-weight: 700; color: var(--volt); }
+        .kvkk-madde { margin: 0; padding-left: 18px; }
+        .kvkk-madde li { font-size: 14px; color: #d6d8dd; margin-bottom: 7px; line-height: 1.5; }
+        .kvkk-link { color: var(--blue); font-weight: 600; text-decoration: none; font-size: 14px; }
+
+        /* Consent row: unticked by default, with a large touch area */
+        .kvkk-onay-satir { display: flex; align-items: flex-start; gap: 12px; background: rgba(59,130,246,0.08);
+                           border: 1px solid rgba(59,130,246,0.25); border-radius: var(--radius-md);
+                           padding: 16px 18px; margin-bottom: 18px; cursor: pointer; }
+        .kvkk-onay-satir input { width: 22px; height: 22px; margin: 0; flex-shrink: 0; cursor: pointer; accent-color: var(--blue); }
+        .kvkk-onay-satir label { font-size: 14px; color: var(--text); line-height: 1.5; cursor: pointer; }
+
+        /* Deliberately asymmetric: "agree" is a solid primary button and "continue without
+           consent" a muted text link, so a quick tap does not refuse by accident. */
+        .kvkk-ikincil { display: block; width: 100%; background: none; border: none; color: var(--text-2);
+                        font-size: 13px; text-decoration: underline; cursor: pointer; padding: 16px 0 4px;
+                        font-family: inherit; }
+        .kvkk-ikincil:hover { color: var(--text); }
+
+        /* Intermediate screen (confirm continuing without consent) and withdrawal, same pattern */
+        .kvkk-uyari-kutu { background: rgba(245,158,11,0.1); border: 1px solid rgba(245,158,11,0.25);
+                           border-radius: var(--radius-md); padding: 18px; margin-bottom: 18px; }
+        .kvkk-uyari-kutu p { margin: 0; font-size: 14px; color: #fcd34d; line-height: 1.55; }
+        .kvkk-btn-satir { display: flex; gap: 10px; }
+        .kvkk-btn-satir .ana-btn { flex: 1; }
+        .btn-sessiz { background: rgba(255,255,255,0.06); color: var(--text); box-shadow: none;
+                      border: 1px solid var(--border); }
+
+        /* "Withdraw my consent" link on the tracking screens: understated */
+        .kvkk-geri-cek { background: none; border: none; color: var(--text-2); font-size: 12px;
+                         text-decoration: underline; cursor: pointer; margin-top: 26px; font-family: inherit; }
+        .kvkk-geri-cek:hover { color: var(--text); }
+        #kvkkBilgiEkran .ana-btn { max-width: 340px; margin-top: 26px; }
+        #kvkkOnaysizEkran { justify-content: center; }
+    </style>
+    <!-- DOMPurify v3, served locally -->
+    <script src="/libs/purify.min.js"></script>
+</head>
+<body>
+
+    <div id="yukleniyor" class="tam-ekran-mesaj gosterilsin">
+        <h2>Bağlanıyor...</h2>
+        <p>Görev bilgileriniz doğrulanıyor.</p>
+    </div>
+
+    <div id="ekran-hata" class="tam-ekran-mesaj">
+        <span class="buyuk-ikon"><svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg></span>
+        <div class="hata-kutu">
+            <h3 id="hataBaslik">Geçersiz Link</h3>
+            <p id="hataAciklama">Bu bağlantı geçersiz veya süresi dolmuş.</p>
+        </div>
+    </div>
+
+    <!-- KVKK privacy notice summary and consent statement, shown before any location is
+         requested. The full text is on kvkk/aydinlatma-yolcu.html.
+         ADD THIS FILE: frontend/kvkk/aydinlatma-yolcu.html is NOT included in this repository.
+         Create it yourself with your own customer privacy notice (KVKK "aydınlatma metni");
+         until it exists, the link below leads to a 404 page. -->
+    <div id="kvkkEkran" class="tam-ekran-mesaj">
+        <div class="kvkk-govde">
+            <span class="etiket">Kişisel Verilerin Korunması</span>
+            <h2>Konumunuz için onayınız gerekiyor</h2>
+            <p class="kvkk-alt-baslik">Devam etmeden önce lütfen aşağıdaki bilgilendirmeyi okuyun.</p>
+
+            <div class="kvkk-kutu">
+                <span class="kvkk-sorumlu">Veri Sorumlusu</span>
+                <p class="kvkk-unvan" id="kvkkUnvan">Hizmeti aldığınız firma</p>
+                <p>Verileriniz bu firma adına işlenir. Shuttle &amp; Valet Ops, firmanın talimatıyla çalışan teknik altyapı sağlayıcısıdır.</p>
+            </div>
+
+            <div class="kvkk-kutu">
+                <ul class="kvkk-madde">
+                    <li id="kvkkNeIsleniyor"><strong>Ne işleniyor:</strong> haritada işaretlediğiniz konum (veya seçtiğiniz durak), adınız ve telefon numaranız.</li>
+                    <li><strong>Niçin:</strong> aracın size yönlendirilmesi ve tahmini varış süresinin gösterilmesi.</li>
+                    <li><strong>Ne kadar süreyle:</strong> konumunuz işlem biter bitmez silinir. Diğer bilgiler yalnızca bu işlem için tutulur ve en geç 30 gün içinde otomatik olarak silinir.</li>
+                    <li><strong>Haklarınız:</strong> onayınızı dilediğiniz an geri çekebilir, verilerinizin silinmesini isteyebilirsiniz.</li>
+                </ul>
+                <!-- ADD THIS FILE: frontend/kvkk/aydinlatma-yolcu.html (not included; see the note above). -->
+                <p><a id="kvkkTamMetin" class="kvkk-link" href="kvkk/aydinlatma-yolcu.html" target="_blank" rel="noopener noreferrer">Aydınlatma metninin tamamını oku →</a></p>
+            </div>
+
+            <div class="kvkk-onay-satir" id="kvkkOnaySatir">
+                <input type="checkbox" id="kvkkOnayKutusu">
+                <label for="kvkkOnayKutusu">Konumumun; aracın yönlendirilmesi ve varış süresinin gösterilmesi amacıyla işlenmesine <strong>açık rıza veriyorum.</strong></label>
+            </div>
+
+            <button id="kvkkDevamBtn" class="ana-btn" type="button" disabled>Onaylıyorum ve devam et</button>
+            <button id="kvkkOnaysizBtn" class="kvkk-ikincil" type="button">Onay vermeden devam et</button>
+        </div>
+    </div>
+
+    <!-- Intermediate screen: a one-tap way back before continuing without consent -->
+    <div id="kvkkOnaysizEkran" class="tam-ekran-mesaj">
+        <div class="kvkk-govde">
+            <h2>Onay vermediniz</h2>
+            <div class="kvkk-uyari-kutu">
+                <p>Onay vermezseniz konumunuz alınamaz; aracın size ne zaman ulaşacağı bilgisi gösterilemez. İşleminiz iptal edilmez — firma sizinle telefonla iletişime geçecektir.</p>
+            </div>
+            <div class="kvkk-btn-satir">
+                <button id="kvkkGeriDonBtn" class="ana-btn" type="button">Geri dön</button>
+                <button id="kvkkOnaysizDevamBtn" class="ana-btn btn-sessiz" type="button">Evet, onaysız devam et</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Information screen after continuing without consent or withdrawing it -->
+    <div id="kvkkBilgiEkran" class="tam-ekran-mesaj">
+        <span class="orta-ikon"><svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span>
+        <h2 id="kvkkBilgiBaslik">Konum bilginiz alınmadı</h2>
+        <p id="kvkkBilgiAciklama">İşleminiz iptal edilmedi. Firma sizinle telefonla iletişime geçecektir.</p>
+        <button id="kvkkFikrimiDegistirdimBtn" class="ana-btn" type="button">Fikrimi değiştirdim, onay vermek istiyorum</button>
+    </div>
+
+    <div id="uygulama-arayuzu">
+        <div id="header">
+            <div class="header-logo-satir">
+                <svg width="32" height="32" viewBox="0 0 80 80" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <rect width="80" height="80" rx="14" fill="#0A0A0A"/>
+                    <path d="M22 18 L22 62" stroke="#FFFFFF" stroke-width="7" stroke-linecap="round"/>
+                    <path d="M22 18 Q50 18 50 32 Q50 46 22 46" stroke="#FFFFFF" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+                    <path d="M50 32 L64 32" stroke="#DFFF00" stroke-width="4" stroke-linecap="round"/>
+                    <circle cx="64" cy="32" r="5" fill="#DFFF00"/>
+                </svg>
+                <span class="marka-yazi">PAX<span class="marka-volt">ROUTE</span></span>
+            </div>
+            <span id="gorevEtiketi" class="etiket">Görev Bekleniyor</span>
+            <h2 id="karsilama">Merhaba</h2>
+            <div id="aracPlaka" class="plaka-badge gizli"></div>
+            <!-- For valet tasks this line replaces the plate badge (plain text, no yellow box) -->
+            <p id="valePersonel" class="vale-personel"></p>
+            <p id="gorevAciklamasi">Lütfen harita üzerinde konumunuzu seçin.</p>
+        </div>
+        <div id="map-area"><div id="map"></div></div>
+        <div id="durak-area">
+            <div class="orta-ikon"><svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg></div>
+            <p id="durakSecimMetni" class="durak-secim-metni">Lütfen size en yakın durağı seçin. Servis aracı belirtilen saatte bu durakta olacaktır.</p>
+            <select id="durakSecici" class="ana-btn durak-secici">
+                <option value="">-- Durak Yükleniyor... --</option>
+            </select>
+        </div>
+        <div id="footer">
+            <div id="bilgi-alani" class="bilgi-alani">Haritadan konum seçiniz</div>
+            <button id="onayBtn" class="ana-btn" disabled>Konumu Onayla</button>
+        </div>
+    </div>
+
+    <div id="ekran-dagitim-basari" class="tam-ekran-mesaj">
+        <span class="dev-ikon-1"><svg width="72" height="72" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg></span>
+        <h2>Durak Bilgisi Alındı!</h2>
+        <p>İnmek istediğiniz durak bilgisi şoförünüzün rotasına başarıyla eklendi.</p>
+        <div id="dagitimSaatKutu" class="canli-eta-kutu" style="display:none;">
+            <div class="hareket-saati-baslik">Hareket Saati</div>
+            <div class="hareket-saati-deger" id="dagitimSaatDeger">--:--</div>
+        </div>
+        <div id="beklemeKutusu">Servis aracınız perona yanaştığında tarafınıza anlık bilgi iletilecektir. Lütfen anons gelene kadar bekleme alanında kalınız.</div>
+        <button class="kvkk-geri-cek kvkk-geri-cek-btn" type="button">Konum onayımı geri çekmek istiyorum</button>
+    </div>
+
+    <div id="ekran-toplama-takip" class="tam-ekran-mesaj">
+        <span class="dev-ikon-2"><svg width="72" height="72" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><polygon points="3 11 22 2 13 21 11 13 3 11"></polygon></svg></span>
+        <h2>Rotaya Eklendiniz</h2>
+        <p>Servis aracı size doğru yaklaştıkça aşağıdaki sıranız canlı olarak güncellenecektir.</p>
+        <div id="siraKutusu" class="canli-eta-kutu">
+            <div class="sira-baslik" id="siraBaslik">Tahmini Varış Saati</div>
+            <span id="canliSure">Hesaplanıyor...</span>
+            <div id="siraAltBilgi" class="sira-alt-bilgi"></div>
+        </div>
+        <button class="kvkk-geri-cek kvkk-geri-cek-btn" type="button">Konum onayımı geri çekmek istiyorum</button>
+    </div>
+
+
+    <div id="ekran-vale-takip" class="tam-ekran-mesaj">
+        <span class="dev-ikon-2"><svg width="72" height="72" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16c0 1.1.9 2 2 2h12a2 2 0 0 0 2-2V8l-6-6z"/><path d="M14 3v5h5M16 13H8M16 17H8M10 9H8"/></svg></span>
+        <h2 id="valeDurumBaslik">Vale Bekleniyor</h2>
+        <div id="valePlakaKutu" style="display:none; background:#eab308; color:#000; padding:8px; border-radius:6px; text-align:center; font-size:18px; font-weight:800; letter-spacing:1px; margin:10px auto; max-width:200px; border:2px solid #000; box-shadow:0 4px 10px rgba(234,179,8,0.3);"></div>
+        <p id="valeDurumAciklama">İşleminiz devam ediyor.</p>
+        <div id="valeEtaKutu" class="canli-eta-kutu" style="display:none;">
+            <!-- The box shows a clock time, so the heading says arrival time, not duration (as for shuttle). -->
+            <div class="sira-baslik">Tahmini Varış Saati</div>
+            <span id="valeEtaSure">İzleniyor...</span>
+        </div>
+        <!-- Satisfaction survey, shown after a valet delivery (within ANKET_PENCERESI_SAAT).
+             The questions are defined in one array in musteri.js and rendered from there. -->
+        <div id="anketKutu" class="anket-kutu" style="display:none;">
+            <div class="anket-baslik">Hizmetimizi değerlendirin</div>
+            <p class="anket-alt">Yalnızca ilk soru zorunludur, diğerlerini atlayabilirsiniz.</p>
+            <div id="anketSorular"></div>
+            <textarea id="anketYorum" class="anket-yorum" rows="4" maxlength="500"
+                      placeholder="Eklemek istedikleriniz (isteğe bağlı)"></textarea>
+            <div class="anket-sayac"><span id="anketSayac">0</span> / <span id="anketLimit">500</span></div>
+            <div id="anketHata" class="anket-hata" style="display:none;"></div>
+            <button id="anketGonderBtn" class="anket-btn" type="button" disabled>Değerlendirmeyi Gönder</button>
+        </div>
+        <div id="anketTesekkur" class="anket-tesekkur" style="display:none;">
+            Değerlendirmeniz için teşekkür ederiz.
+        </div>
+        <button class="kvkk-geri-cek kvkk-geri-cek-btn" type="button">Konum onayımı geri çekmek istiyorum</button>
+    </div>
+
+    <script src="https://api.mapbox.com/mapbox-gl-js/v3.3.0/mapbox-gl.js"></script>
+    <script src="config.js"></script>
+    <script src="js/musteri.js"></script>
+</body>
+</html>

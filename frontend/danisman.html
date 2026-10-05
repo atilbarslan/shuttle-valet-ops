@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shuttle &amp; Valet Ops | Danışman Paneli</title>
+    <!-- Content Security Policy: replace YOUR_DOMAIN with the domain the app is served from
+         (for example app.example.com) so the page may call the API (https://) and the live
+         WebSocket (wss://). The localhost entries are only for local development. -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' http://127.0.0.1:8000 ws://127.0.0.1:8000 http://localhost:8000 ws://localhost:8000 https://YOUR_DOMAIN wss://YOUR_DOMAIN; img-src 'self' data:;">
+    <style>
+        @font-face {
+            font-family: 'Inter';
+            src: url('fonts/InterVariable.woff2') format('woff2');
+            font-weight: 100 900;
+            font-style: normal;
+            font-display: swap;
+        }
+        :root {
+            --bg-color: #0d0d12;
+            --surface: rgba(25, 25, 32, 0.6);
+            --surface-2: rgba(0, 0, 0, 0.2);
+            --border: rgba(255, 255, 255, 0.08);
+            --text: #ffffff;
+            --text-2: #8a8f98;
+            --volt: #DFFF00;
+            --volt-hover: #e8ff4d;
+            --blue: #3b82f6;
+            --green: #10b981;
+            --red: #ef4444;
+            --radius-lg: 16px;
+            --radius-md: 12px;
+            --transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            /* older variable names, kept as aliases */
+            --p: #DFFF00;
+            --bg: #0d0d12;
+        }
+        * { box-sizing: border-box; }
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background-color: var(--bg-color);
+            background-image:
+                radial-gradient(circle at 15% 50%, rgba(223, 255, 0, 0.03), transparent 25%),
+                radial-gradient(circle at 85% 30%, rgba(59, 130, 246, 0.04), transparent 25%);
+            margin: 0; padding: 30px; color: var(--text); min-height: 100vh;
+        }
+        .header {
+            display: flex; justify-content: space-between; align-items: center;
+            background: var(--surface); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+            border: 1px solid var(--border); border-radius: var(--radius-lg);
+            box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+            padding: 20px 30px; margin-bottom: 30px;
+        }
+        .header h1 { margin: 0; font-size: 24px; letter-spacing: -0.5px; color: var(--text); }
+        .cikis-btn {
+            background: transparent; color: var(--text-2); border: 1px solid var(--border);
+            padding: 10px 20px; border-radius: var(--radius-md); font-weight: 500; cursor: pointer;
+            transition: var(--transition);
+        }
+        .cikis-btn:hover { background: rgba(239,68,68,0.1); color: var(--red); border-color: rgba(239,68,68,0.3); }
+        .grid { display: grid; grid-template-columns: 1fr 2fr; gap: 30px; }
+        .kart {
+            background: var(--surface); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+            border: 1px solid var(--border); padding: 30px; border-radius: var(--radius-lg);
+            box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+        }
+        .kart h2 { margin-top: 0; font-size: 14px; color: var(--text); text-transform: uppercase; letter-spacing: 1px; border-bottom: 1px solid var(--border); padding-bottom: 12px; margin-bottom: 20px; }
+        .form-grup { margin-bottom: 18px; }
+        label { display: block; font-size: 12px; color: var(--text-2); font-weight: 500; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px; }
+        input, select {
+            width: 100%; padding: 14px 15px; background: var(--surface-2); border: 1px solid var(--border);
+            border-radius: var(--radius-md); box-sizing: border-box; font-size: 14px; color: var(--text);
+            font-family: inherit; outline: none; transition: var(--transition); appearance: none;
+        }
+        input:focus, select:focus { border-color: var(--volt); box-shadow: 0 0 0 3px rgba(223,255,0,0.1); }
+        select option { background: var(--bg-color); color: var(--text); }
+        .ana-btn {
+            width: 100%; padding: 16px; background: var(--volt); color: #000; border: none;
+            border-radius: var(--radius-md); font-size: 15px; font-weight: 700; cursor: pointer; margin-top: 10px;
+            transition: var(--transition); box-shadow: 0 4px 15px rgba(223,255,0,0.2);
+        }
+        .ana-btn:hover { background: var(--volt-hover); transform: translateY(-2px); box-shadow: 0 6px 20px rgba(223,255,0,0.3); }
+        .ana-btn:active { transform: translateY(0); }
+        .sonuc-kutusu { margin-top: 25px; padding: 20px; background: rgba(59,130,246,0.05); border: 1px dashed rgba(59,130,246,0.3); border-radius: var(--radius-md); display: none; text-align: center; }
+        .link-alani { background: rgba(0,0,0,0.3); padding: 12px; border-radius: 8px; font-family: monospace; font-size: 12px; color: var(--text-2); margin: 12px 0; word-break: break-all; border: 1px solid var(--border); }
+        .aksiyon-butonlari { display: flex; gap: 10px; margin-top: 15px; }
+        .kopyala-btn { flex: 1; padding: 12px; border: none; background: rgba(255,255,255,0.1); color: var(--text); border-radius: 8px; cursor: pointer; font-weight: 600; transition: var(--transition); display: flex; align-items: center; justify-content: center; gap: 8px; }
+        .kopyala-btn:hover { background: rgba(255,255,255,0.15); }
+        .wp-btn { flex: 1; padding: 12px; border: 1px solid rgba(16,185,129,0.2); background: rgba(16,185,129,0.1); color: var(--green); border-radius: 8px; cursor: pointer; font-weight: 600; text-decoration: none; display: flex; align-items: center; justify-content: center; gap: 8px; transition: var(--transition); }
+        .wp-btn:hover { background: rgba(16,185,129,0.2); }
+        .yolcu-satir { display: flex; justify-content: space-between; align-items: center; padding: 16px; background: rgba(0,0,0,0.2); border: 1px solid var(--border); border-radius: var(--radius-md); margin-bottom: 10px; transition: var(--transition); }
+        .yolcu-satir:hover { background: rgba(255,255,255,0.03); transform: translateX(4px); }
+        .durum-rozet { padding: 6px 12px; border-radius: 20px; font-size: 11px; font-weight: 600; letter-spacing: 0.5px; }
+        .bos-liste { color: var(--text-2); padding: 40px 20px; text-align: center; font-size: 14px; }
+        #yetkiHata { display: none; background: var(--bg-color); color: var(--text); padding: 30px; text-align: center; height: 100vh; flex-direction: column; justify-content: center; align-items: center; position: fixed; top:0; left:0; width:100%; z-index:9999; }
+
+        /* Styles moved out of inline style attributes into classes */
+
+        /* General: icon and app visibility */
+        .uyari-ikon { color: var(--red); margin-bottom: 20px; display: inline-flex; }
+        #anaUygulama { display: none; }
+        .gosterilsin { display: block; }
+
+        /* Header */
+        .header-logo-satir { display: flex; align-items: center; gap: 14px; }
+        .header-altyazi { color: var(--text-2); font-size: 13px; }
+        .danisman-marka-rozet { display: inline-block; margin-left: 0; margin-top: 6px; background: rgba(223,255,0,0.1); color: var(--volt); padding: 4px 10px; border-radius: 8px; font-size: 12px; font-weight: 600; border: 1px solid rgba(223,255,0,0.2); }
+
+        /* Phone input */
+        .telefon-satir { display: flex; align-items: center; gap: 8px; }
+        .telefon-prefix { background: var(--surface-2); border: 1px solid var(--border); padding: 14px; border-radius: var(--radius-md); font-weight: 600; font-size: 14px; color: var(--text-2); }
+        .telefon-input { width: 100%; padding: 14px; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-md); box-sizing: border-box; font-size: 14px; color: var(--text); margin-bottom: 0; }
+
+        /* Inside the result box */
+        .sonuc-basarili { font-weight: 600; color: var(--blue); display: flex; align-items: center; justify-content: center; gap: 8px; }
+
+        /* Completed tasks card: green edge */
+        .kart-tamamlananlar { border-top: 3px solid var(--green); }
+
+        /* Off-screen textarea for the copy fallback */
+        .kopyalama-textarea { position: fixed; left: -9999px; top: 0; }
+
+        /* === Vehicle box (built by the JS) === */
+        .arac-kutusu { background: rgba(0,0,0,0.2); border: 1px solid var(--border); border-radius: var(--radius-md); margin-bottom: 20px; overflow: hidden; }
+        .arac-header { display: flex; justify-content: space-between; align-items: center; background: rgba(255,255,255,0.03); padding: 12px 15px; border-bottom: 1px solid var(--border); }
+        .arac-baslik { display: flex; align-items: center; }
+        .arac-plaka { font-size: 16px; color: var(--text); font-weight: 600; }
+        /* Valet name in the brand colour, so it stands apart from white vehicle plates */
+        .arac-plaka.vale-ad { color: var(--volt); }
+        .arac-aksiyonlar { display: flex; gap: 10px; align-items: center; }
+
+        /* Departure time selector */
+        .saat-secici-kutu { display: flex; align-items: center; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; background: var(--surface-2); }
+        .saat-select { padding: 4px 6px; border: none; outline: none; font-size: 12px; background: transparent; color: var(--text); cursor: pointer; width: auto; border-radius: 0; }
+        .saat-kaydet-btn { background: var(--blue); color: white; border: none; padding: 5px 10px; font-size: 12px; font-weight: bold; cursor: pointer; }
+
+        /* Vehicle status badge */
+        .arac-durum-rozet { padding: 6px 12px; border-radius: 8px; font-size: 12px; font-weight: bold; }
+        .durum-default { background: rgba(255,255,255,0.08); color: var(--text-2); }
+        .durum-donus { background: rgba(59,130,246,0.15); color: #60a5fa; }
+        .durum-merkezde { background: rgba(16,185,129,0.12); color: #34d399; }
+        .durum-disarda { background: rgba(245,158,11,0.12); color: #fbbf24; }
+        .durum-gorevde { background: rgba(239,68,68,0.12); color: #f87171; }
+
+        /* Route badge */
+        .guzergah-rozet { font-size: 12px; color: var(--text-2); background: rgba(255,255,255,0.05); padding: 4px 8px; border-radius: 6px; margin-left: 10px; font-weight: normal; }
+
+        /* Passenger list inside a vehicle box */
+        .arac-yolcu-listesi { padding: 0 15px; }
+        .bos-arac-mesaj { color: var(--text-2); font-size: 12px; padding: 15px 0; text-align: center; }
+        .yolcu-kayit-satir { display: flex; justify-content: space-between; align-items: center; padding: 12px 0; border-bottom: 1px solid var(--border); }
+        .yolcu-ad { font-size: 14px; color: var(--text); }
+        .yolcu-gorev { font-size: 11px; color: var(--text-2); margin-left: 5px; }
+        .yolcu-tel { font-size: 12px; color: var(--blue); text-decoration: none; }
+
+        /* Passenger status badges */
+        .yolcu-durum-rozet { padding: 4px 10px; border-radius: 20px; font-size: 11px; font-weight: bold; }
+        .durum-bekliyor { background: rgba(255,255,255,0.08); color: var(--text); }
+        .durum-konum { background: rgba(59,130,246,0.15); color: #60a5fa; }
+        .durum-hazir { background: rgba(245,158,11,0.12); color: #fbbf24; }
+        .durum-alindi { background: rgba(16,185,129,0.12); color: #34d399; }
+        .durum-gelmedi { background: rgba(239,68,68,0.12); color: #f87171; }
+
+        /* Completed list */
+        .tamamlanan-satir { display: flex; justify-content: space-between; align-items: center; background: rgba(0,0,0,0.2); border-radius: 8px; margin-bottom: 10px; padding: 12px; opacity: 0.75; border: 1px solid var(--border); }
+        .tamamlanan-bilgi { flex: 1; }
+        .tamamlanan-ad { color: var(--text-2); text-decoration: line-through; font-size: 15px; }
+        .tamamlanan-detay { font-size: 12px; color: var(--text-2); display: block; margin-top: 4px; }
+        .tamamlanan-arac { color: var(--text); }
+        .tamamlanan-rozet { font-size: 12px; padding: 6px 12px; border-radius: 20px; font-weight: bold; }
+        .tamamlanan-basarili { background: rgba(16,185,129,0.12); color: #34d399; }
+        .tamamlanan-basarisiz { background: rgba(239,68,68,0.12); color: #f87171; }
+        .tamamlanan-iptal { background: rgba(148,163,184,0.14); color: #94a3b8; }
+        /* Times, always in Istanbul time (saatTR in the JS) */
+        .tamamlanan-zaman { font-size: 11px; color: var(--text-2); display: block; margin-top: 3px; font-variant-numeric: tabular-nums; }
+        .kayit-zaman { font-size: 11px; color: var(--text-2); margin-left: 8px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+        /* Active valet task carried over from an earlier day, marked so it is not mistaken for today's */
+        .devreden-rozet { font-size: 11px; font-weight: bold; color: #fbbf24; background: rgba(251,191,36,0.12); padding: 3px 7px; border-radius: 5px; margin-left: 8px; letter-spacing: .3px; }
+        /* KVKK: the customer refused or withdrew location consent; staff continue by phone */
+        /* Task milestone timeline: promised vs actual time */
+        .etap-cizelge { margin-top: 8px; padding-left: 10px; border-left: 2px solid rgba(255,255,255,0.12); }
+        .etap-satir { font-size: 11px; color: var(--text-2, #8a8f98); line-height: 1.7; }
+        .etap-satir b { color: var(--text, #fff); font-weight: 600; }
+        .etap-sapma { font-weight: 700; padding: 1px 6px; border-radius: 4px; margin-left: 4px; }
+        .etap-gec { color: #f87171; background: rgba(239,68,68,0.12); }
+        .etap-erken { color: #60a5fa; background: rgba(59,130,246,0.12); }
+        .etap-zamaninda { color: #34d399; background: rgba(16,185,129,0.12); }
+        .etap-suruyor { color: #fbbf24; font-weight: 600; }
+        .etap-iptal { color: #f87171; font-style: italic; }
+        .riza-rozet { font-size: 11px; font-weight: bold; color: #f87171; background: rgba(239,68,68,0.12); border: 1px solid rgba(239,68,68,0.3); padding: 2px 7px; border-radius: 5px; margin-left: 8px; letter-spacing: .3px; cursor: help; }
+        /* Right side of a valet task row: status badge and cancel button */
+        .yolcu-satir-sag { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+        .gorev-iptal-btn { background: rgba(239,68,68,0.10); color: #f87171; border: 1px solid rgba(239,68,68,0.35); padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; }
+        .gorev-iptal-btn:hover { background: rgba(239,68,68,0.18); }
+
+        @media (max-width: 768px) {
+            body { padding: 15px; }
+            .grid { display: flex; flex-direction: column; gap: 20px; }
+            .header { flex-direction: column; align-items: flex-start; gap: 15px; padding: 20px; }
+            .cikis-btn { width: 100%; text-align: center; padding: 14px; font-size: 16px; margin-top: 10px;}
+            .kart { padding: 20px 15px; }
+            input, select, .ana-btn { font-size: 16px; padding: 16px; }
+            .sonuc-kutusu { padding: 15px; }
+            .link-alani { font-size: 12px; padding: 15px 10px; line-height: 1.4; }
+            .aksiyon-butonlari { flex-direction: column; gap: 10px; }
+            .kopyala-btn, .wp-btn { width: 100%; padding: 16px; font-size: 16px; }
+            .yolcu-satir { flex-direction: column; align-items: flex-start; gap: 12px; padding: 15px; }
+            .durum-rozet { width: 100%; text-align: center; box-sizing: border-box; padding: 10px; font-size: 13px; }
+            .arac-header { flex-direction: column; align-items: flex-start; gap: 10px; }
+            .arac-aksiyonlar { width: 100%; flex-wrap: wrap; }
+            .yolcu-kayit-satir { flex-direction: column; align-items: flex-start; gap: 8px; }
+            .yolcu-durum-rozet { align-self: flex-end; }
+        }
+    </style>
+    <!-- DOMPurify v3, served locally -->
+    <script src="/libs/purify.min.js"></script>
+</head>
+<body>
+
+    <div id="yetkiHata">
+        <span class="uyari-ikon"><svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg></span>
+        <h2>Yetkisiz Erişim</h2>
+        <p>Lütfen giriş ekranından tekrar giriş yapın.</p>
+    </div>
+
+    <div id="anaUygulama">
+        <div class="header">
+            <div class="header-logo-satir">
+                <svg width="42" height="42" viewBox="0 0 80 80" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <rect width="80" height="80" rx="14" fill="#0A0A0A"/>
+                    <path d="M22 18 L22 62" stroke="#FFFFFF" stroke-width="7" stroke-linecap="round"/>
+                    <path d="M22 18 Q50 18 50 32 Q50 46 22 46" stroke="#FFFFFF" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+                    <path d="M50 32 L64 32" stroke="#DFFF00" stroke-width="4" stroke-linecap="round"/>
+                    <circle cx="64" cy="32" r="5" fill="#DFFF00"/>
+                </svg>
+                <div>
+                    <h1 id="firmaAdiBaslik">Operasyon Merkezi</h1>
+                    <span class="header-altyazi" id="headerAltyazi">Danışman / Yolcu Kabul Ekranı</span>
+                    <div id="danismanMarka" class="danisman-marka-rozet">Yükleniyor...</div>
+                </div>
+            </div>
+            <button id="cikisBtn" class="cikis-btn">Çıkış Yap</button>
+        </div>
+
+        <div class="grid">
+            <div class="kart" id="yeniKayitKart">
+                <h2 id="yeniKayitBaslik">1. Yeni Yolcu Kaydı</h2>
+                <div class="form-grup">
+                    <label>Müşteri Adı Soyadı</label>
+                    <input type="text" id="mAd" placeholder="Örn: Ahmet Yılmaz">
+                </div>
+                <div class="form-grup">
+                    <label>Müşteri Telefon</label>
+                    <div class="telefon-satir">
+                        <span class="telefon-prefix">+90</span>
+                        <input type="tel" id="mTel" class="telefon-input" placeholder="5XX XXX XX XX" maxlength="10">
+                    </div>
+                </div>
+                <div class="form-grup">
+                    <label>Görev Tipi (Zorunlu)</label>
+                    <select id="mGorev">
+                        <option value="">-- Lütfen Seçiniz --</option>
+                        <option value="TOPLAMA">Evden Merkeze (Toplama)</option>
+                        <option value="DAGITIM">Merkezden Eve (Dağıtım)</option>
+                        <option value="VALE_ALIM">Araç Alım (Konum İstenecek)</option>
+                        <option value="VALE_TESLIM">Araç Teslim (Konum İstenecek)</option>
+                    </select>
+                </div>
+                <div class="form-grup" id="plakaGrup" style="display:none;">
+                    <label>Müşteri Araç Plakası (Zorunlu)</label>
+                    <input type="text" id="mPlaka" placeholder="Örn: 34 ABC 123" style="text-transform: uppercase;">
+                </div>
+                <div class="form-grup">
+                    <label id="aracSeciciEtiket">Atanacak Servis Aracı</label>
+                    <select id="mArac">
+                        <option value="">Araçlar Yükleniyor...</option>
+                    </select>
+                </div>
+                <button class="ana-btn" id="olusturBtn">Sisteme Ekle ve Link Üret</button>
+
+                <div id="sonucKutusu" class="sonuc-kutusu">
+                    <div class="sonuc-basarili"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>Yolcu Sisteme Kaydedildi!</div>
+                    <div class="link-alani" id="uretilenLink"></div>
+                    <div class="aksiyon-butonlari">
+                        <button id="kopyalaBtn" class="kopyala-btn"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>Kopyala</button>
+                        <a id="wpLink" class="wp-btn" target="_blank" rel="noopener noreferrer"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path></svg>WhatsApp</a>
+                    </div>
+                </div>
+            </div>
+
+            <div class="kart" id="yolcularKart">
+                <h2>2. Bugünün Yolcuları (Canlı)</h2>
+                <div id="yolcuListesi"><div class="bos-liste">Yükleniyor...</div></div>
+            </div>
+            <div class="kart" id="valeKart">
+                <h2 id="valeBaslik">3. Vale Görevleri (Canlı)</h2>
+                <div id="valeListesi"><div class="bos-liste">Yükleniyor...</div></div>
+            </div>
+            <div class="kart kart-tamamlananlar">
+                <h2 id="tamamlananBaslik">4. Tamamlanan Görevler (Bugün)</h2>
+                <div id="tamamlananListesi"><div class="bos-liste">Henüz tamamlanan görev yok.</div></div>
+            </div>
+            <div class="kart" id="servistekiKart">
+                <h2 id="servistekiBaslik">5. Serviste Bekleyen Araçlar</h2>
+                <div id="servistekiListesi"><div class="bos-liste">Yükleniyor...</div></div>
+            </div>
+        </div>
+    </div>
+
+    <script src="config.js"></script>
+    <script src="js/danisman.js"></script>
+    <!-- The staff panels have no service worker, so an open tab does not pick up a deploy by
+         itself. This script watches CACHE_VERSION in sw.js and shows a "new version" banner. -->
+    <script src="js/surum-kontrol.js"></script>
+</body>
+</html>

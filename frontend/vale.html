@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Shuttle &amp; Valet Ops | Vale Paneli</title>
+    <!-- Content Security Policy: replace YOUR_DOMAIN with the domain the app is served from
+         (for example app.example.com) so the page may call the API (https://) and the live
+         WebSocket (wss://). The localhost entries are only for local development. -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' http://127.0.0.1:8000 ws://127.0.0.1:8000 http://localhost:8000 ws://localhost:8000 https://YOUR_DOMAIN wss://YOUR_DOMAIN; img-src 'self' data:; worker-src 'self';">
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#0d0d12">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-touch-fullscreen" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="apple-mobile-web-app-title" content="Shuttle &amp; Valet Ops">
+    <link rel="apple-touch-icon" href="/icon-192.png">
+    <!-- No iOS splash screen images here, unlike sofor.html. -->
+    
+    <style>
+        @font-face {
+            font-family: 'Inter';
+            src: url('fonts/InterVariable.woff2') format('woff2');
+            font-weight: 100 900;
+            font-style: normal;
+            font-display: swap;
+        }
+        :root { --bg: #0d0d12; --surface: rgba(25,25,32,0.7); --border: rgba(255,255,255,0.08); --text: #ffffff; --text-2: #8a8f98; --blue: #3b82f6; --green: #10b981; --orange: #f59e0b; --purple: #8b5cf6; --red: #ef4444; --volt: #DFFF00; --radius-lg: 20px; --radius-md: 14px; }
+        * { box-sizing: border-box; }
+        html, body { background: var(--bg); }
+        body { font-family: 'Inter', sans-serif; margin: 0; padding: 15px; padding-bottom: 100px; color: var(--text); background-image: radial-gradient(circle at 50% 0%, rgba(59,130,246,0.05), transparent 50%); min-height: 100vh; overflow-x: hidden; }
+        
+        .ust-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding: 0 5px; }
+        .ust-bar h2 { margin: 0; font-size: 20px; letter-spacing: -0.5px; }
+        .arac-rozet { background: rgba(223,255,0,0.1); color: var(--volt); border: 1px solid rgba(223,255,0,0.2); padding: 6px 12px; border-radius: 10px; font-weight: bold; font-size: 14px; }
+        .cikis-btn { background: rgba(239,68,68,0.1); color: var(--red); border: 1px solid rgba(239,68,68,0.2); padding: 6px 12px; border-radius: 8px; font-weight: bold; cursor: pointer; font-size: 13px; }
+        
+        .gorev-karti { background: var(--surface); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); padding: 25px 20px; border-radius: 16px; margin-bottom: 15px; box-shadow: 0 10px 30px rgba(0,0,0,0.3); border: 1px solid var(--border); border-left: 4px solid var(--blue); }
+        .gorev-karti.bekliyor { border-left: 4px solid var(--orange); }
+        .gorev-karti.tamamlandi { border-left: 4px solid var(--green); }
+        
+        .gorev-ust { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 15px; }
+        .gorev-tip { font-size: 12px; padding: 4px 10px; border-radius: 8px; font-weight: bold; background: rgba(59,130,246,0.15); color: var(--blue); }
+        .gorev-tip.teslim { background: rgba(139,92,246,0.15); color: var(--purple); }
+        
+        .musteri-isim { font-size: 22px; font-weight: 800; margin: 10px 0 5px 0; }
+        .musteri-tel { font-size: 15px; color: var(--text-2); margin-bottom: 20px; display: block; text-decoration: none; }
+        /* Task creation time, always in Istanbul time (saatTR in the JS) */
+        .gorev-zaman { font-size: 12px; color: #6b7280; margin: -12px 0 16px; font-variant-numeric: tabular-nums; }
+        .musteri-tel:active { color: var(--text); }
+        
+        .btn { width: 100%; padding: 16px; border: none; border-radius: 12px; font-weight: bold; font-size: 16px; cursor: pointer; transition: 0.2s; margin-bottom: 12px; display: flex; justify-content: center; align-items: center; gap: 8px; }
+        .btn-mavi { background: var(--blue); color: white; box-shadow: 0 8px 25px rgba(59,130,246,0.3); }
+        .btn-yesil { background: var(--green); color: black; box-shadow: 0 8px 25px rgba(16,185,129,0.3); }
+        .btn-sari { background: var(--volt); color: black; box-shadow: 0 8px 25px rgba(223,255,0,0.3); }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        
+        .bos-mesaj { text-align: center; padding: 60px 20px; color: var(--text-2); line-height: 1.5; }
+        .bos-ikon { color: rgba(255,255,255,0.1); margin-bottom: 20px; }
+        
+        .offline-toast { position: fixed; bottom: 80px; left: 10px; right: 10px; background: var(--orange); color: #fff; padding: 10px; border-radius: 8px; text-align: center; font-size: 13px; z-index: 9999; font-weight: bold; display: none; }
+        .vale-surum { text-align: center; font-size: 11px; color: #555; margin-top: 16px; padding-bottom: 8px; }
+        
+        /* Loading Overlay */
+        #px-loading { position: fixed; inset: 0; background: var(--bg); z-index: 9999; display: flex; align-items: center; justify-content: center; transition: opacity 0.3s ease-out; }
+        .px-loading-marka { font-size: 28px; font-weight: 900; letter-spacing: -1px; color: var(--text); text-align: center; }
+        .px-loading-volt { background: var(--volt); color: #000; padding: 2px 8px; border-radius: 6px; }
+    </style>
+    <!-- DOMPurify, served locally -->
+    <script src="/libs/purify.min.js"></script>
+</head>
+<body>
+
+    <div id="px-loading">
+        <div class="px-loading-marka">PAX<span class="px-loading-volt">ROUTE</span><br><small style="font-size:12px;color:#8a8f98;font-weight:normal;margin-top:10px;display:block;">Vale Paneli</small></div>
+    </div>
+
+    <div class="ust-bar">
+        <div style="display:flex; align-items:center; gap:10px;">
+            <svg width="34" height="34" viewBox="0 0 80 80" fill="none">
+                <rect width="80" height="80" rx="14" fill="#0A0A0A"/>
+                <path d="M22 18 L22 62" stroke="#FFFFFF" stroke-width="7" stroke-linecap="round"/>
+                <path d="M22 18 Q50 18 50 32 Q50 46 22 46" stroke="#FFFFFF" stroke-width="7" stroke-linecap="round" fill="none"/>
+                <path d="M50 32 L64 32" stroke="#DFFF00" stroke-width="4" stroke-linecap="round"/>
+                <circle cx="64" cy="32" r="5" fill="#DFFF00"/>
+            </svg>
+            <h2>Vale Görevleri</h2>
+        </div>
+        <div style="display:flex; gap:10px; align-items:center;">
+            <div id="aracGosterge" class="arac-rozet">...</div>
+            <button id="cikisBtn" class="cikis-btn">Çıkış</button>
+        </div>
+    </div>
+
+    <div id="icerikGövdesi">
+        <!-- filled in by vale.js -->
+    </div>
+
+    <div id="offlineToast" class="offline-toast">Bağlantı koptu. İşlemleriniz kaydediliyor...</div>
+
+    <!-- Version display, which answers "which version are you on?" during support. The value
+         is CACHE_VERSION from sw.js, asked from the service worker with postMessage. -->
+    <div id="valeSurum" class="vale-surum"></div>
+
+    <script src="config.js"></script>
+    <script src="js/vale.js"></script>
+</body>
+</html>

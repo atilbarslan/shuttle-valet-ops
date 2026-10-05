@@ -1,0 +1,8 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Placeholder app icon: a route from a start point to a stop. Replace it with your own logo
+       and regenerate icon-192.png and icon-512.png from it. -->
+  <rect width="512" height="512" rx="96" fill="#334155"/>
+  <path d="M148 328 L148 256 L364 256 L364 184" stroke="#FFFFFF" stroke-width="36" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="148" cy="372" r="34" stroke="#FFFFFF" stroke-width="20"/>
+  <circle cx="364" cy="140" r="44" fill="#FFFFFF"/>
+</svg>

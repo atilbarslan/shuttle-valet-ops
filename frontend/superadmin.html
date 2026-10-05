@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shuttle &amp; Valet Ops | Süper Admin Paneli</title>
+    <!-- Content Security Policy: replace YOUR_DOMAIN with the domain the app is served from
+         (for example app.example.com) so the page may call the API (https://) and the live
+         WebSocket (wss://). The localhost entries are only for local development. -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' http://127.0.0.1:8000 ws://127.0.0.1:8000 http://localhost:8000 ws://localhost:8000 https://YOUR_DOMAIN wss://YOUR_DOMAIN; img-src 'self' data:;">
+    <style>
+        @font-face {
+            font-family: 'Inter';
+            src: url('fonts/InterVariable.woff2') format('woff2');
+            font-weight: 100 900;
+            font-style: normal;
+            font-display: swap;
+        }
+        :root {
+            --bg: #0d0d12;
+            --surface: rgba(25, 25, 32, 0.5);
+            --surface-2: rgba(0, 0, 0, 0.3);
+            --border: rgba(255, 255, 255, 0.08);
+            --text: #ffffff;
+            --gray: #8a8f98;
+            --blue: #3b82f6;
+            --green: #10b981;
+            --red: #ef4444;
+            --orange: #f59e0b;
+            --volt: #DFFF00;
+            --volt-hover: #e8ff4d;
+            --radius-lg: 20px;
+            --radius-md: 12px;
+            --transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            --panel: #16161c;
+        }
+        * { box-sizing: border-box; }
+        body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; background-color: var(--bg); background-image: radial-gradient(circle at top center, rgba(223,255,0,0.03), transparent 60%); color: var(--text); margin: 0; padding: 30px; display: none; }
+        .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); padding-bottom: 20px; margin-bottom: 30px; }
+        .header-sol { display: flex; align-items: center; gap: 15px; }
+        .header h1 { margin: 0; font-size: 24px; letter-spacing: -0.5px; }
+        .header h1 .marka-volt { color: var(--volt); text-shadow: 0 0 10px rgba(223,255,0,0.3); }
+        .header h1 .marka-gri { font-weight: 300; color: var(--gray); }
+        .badge { background: rgba(223,255,0,0.1); color: var(--volt); border: 1px solid rgba(223,255,0,0.2); padding: 6px 12px; border-radius: 20px; font-size: 12px; font-weight: bold; }
+        .cikis-btn { background: rgba(239,68,68,0.1); color: var(--red); border: 1px solid rgba(239,68,68,0.2); padding: 8px 16px; border-radius: var(--radius-md); font-weight: bold; cursor: pointer; transition: var(--transition); }
+        .cikis-btn:hover { background: var(--red); color: white; }
+        .grid { display: grid; grid-template-columns: 2fr 1fr; gap: 30px; }
+        .kutu { background: var(--surface); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); padding: 25px; border-radius: var(--radius-lg); border: 1px solid var(--border); box-shadow: 0 10px 30px rgba(0,0,0,0.4); }
+        .kutu.mb-20 { margin-bottom: 20px; }
+        .kutu h2 { margin-top: 0; font-size: 16px; color: var(--gray); text-transform: uppercase; letter-spacing: 1px; border-bottom: 1px solid var(--border); padding-bottom: 10px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+        th, td { text-align: left; padding: 12px; border-bottom: 1px solid var(--border); font-size: 14px; }
+        th { color: var(--gray); font-weight: 600; text-transform: uppercase; font-size: 12px; letter-spacing: 0.5px; }
+        tr:hover td { background: rgba(255,255,255,0.02); }
+        .form-grup { margin-bottom: 15px; }
+        /* Hint under a field, for fields that need a "why we ask" (such as the KVKK fields) */
+        .alan-ipucu { display: block; margin-top: 5px; font-size: 11px; color: var(--gray); line-height: 1.4; }
+        .opsiyonel-etiket { font-size: 10px; font-weight: 600; color: var(--gray); border: 1px solid var(--border);
+                            border-radius: 10px; padding: 1px 7px; margin-left: 6px; text-transform: uppercase; }
+        .form-grup.checkbox-grup { display: flex; align-items: center; gap: 8px; }
+        .form-grup.checkbox-grup input { width: auto; cursor: pointer; }
+        .form-grup.checkbox-grup label { cursor: pointer; font-size: 13px; color: var(--gray); margin: 0; }
+        label { display: block; font-size: 12px; color: var(--gray); margin-bottom: 5px; }
+        input, select { width: 100%; padding: 12px; background: var(--surface-2); border: 1px solid var(--border); color: white; border-radius: 8px; box-sizing: border-box; outline: none; transition: var(--transition); }
+        input:focus, select:focus { border-color: var(--volt); background: rgba(0,0,0,0.5); }
+        select#sistemModu { font-weight: bold; color: var(--volt); }
+        .gizli { display: none; }
+        .btn { background: var(--volt); color: #000; border: none; padding: 12px 20px; border-radius: 8px; font-weight: bold; cursor: pointer; width: 100%; margin-top: 10px; transition: var(--transition); box-shadow: 0 4px 15px rgba(223,255,0,0.2); }
+        .btn:hover { background: var(--volt-hover); transform: translateY(-2px); }
+        .btn-green { background: var(--green); color: white; box-shadow: 0 4px 15px rgba(16,185,129,0.2); } .btn-green:hover { background: #34d399; }
+        .firma-aksiyonlar { display: flex; gap: 8px; align-items: center; }
+        .sil-btn { background: rgba(239,68,68,0.1); color: var(--red); border: 1px solid rgba(239,68,68,0.2); padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: bold; cursor: pointer; transition: var(--transition); white-space: nowrap; }
+        .sil-btn:hover { background: var(--red); color: white; }
+        .toggle-btn { padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: bold; cursor: pointer; border: none; transition: var(--transition); white-space: nowrap; }
+        .toggle-aktif { background: rgba(16,185,129,0.1); color: var(--green); border: 1px solid rgba(16,185,129,0.2); } .toggle-aktif:hover { background: var(--green); color: white; }
+        .toggle-pasif { background: rgba(245,158,11,0.1); color: var(--orange); border: 1px solid rgba(245,158,11,0.2); } .toggle-pasif:hover { background: var(--orange); color: white; }
+        .pasif-satir td { opacity: 0.4; }
+        #yetkiHata { display: none; background: var(--bg); color: white; height: 100vh; flex-direction: column; justify-content: center; align-items: center; position: fixed; top:0; left:0; width:100%; z-index:9999; }
+        #yetkiHata .uyari-ikon { color: var(--red); margin-bottom: 20px; display: inline-flex; }
+
+        /* Classes for table cells built by the JS */
+        .durum-aktif { color: var(--green); font-weight: bold; font-size: 12px; }
+        .durum-pasif { color: var(--orange); font-weight: bold; font-size: 12px; }
+        .firma-adi-hucre { font-weight: bold; color: var(--text); }
+        .paket-hucre { font-size: 12px; font-weight: bold; color: #60a5fa; }
+        .tarih-hucre { color: var(--gray); font-size: 12px; }
+        .rehber-kutu { margin-top: 30px; }
+        .bos-hucre { color: #555; }
+        /* Username shown under the display name: muted, secondary */
+        .rehber-kimlik { display: block; font-size: 11px; color: #777; font-family: 'JetBrains Mono', monospace; margin-top: 2px; }
+        #rehberTablosu a { color: var(--volt); text-decoration: none; }
+        #rehberTablosu a:hover { text-decoration: underline; }
+        .telefon-satir { display: flex; align-items: center; gap: 8px; }
+        .telefon-prefix { background: var(--surface-2); border: 1px solid var(--border); padding: 12px; border-radius: 8px; font-weight: bold; color: var(--volt); white-space: nowrap; }
+        .telefon-satir input { width: auto; flex: 1; }
+        .telefon-altyazi { display: block; margin-top: 6px; color: var(--gray); font-size: 11px; }
+        .duzenle-btn { background: rgba(59,130,246,0.1); color: #60a5fa; border: 1px solid rgba(59,130,246,0.2); padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: bold; cursor: pointer; white-space: nowrap; transition: var(--transition); }
+        .duzenle-btn:hover { background: var(--blue); color: white; }
+        .overlay-gizli { display: none; }
+        .overlay-acik { display: flex; position: fixed; inset: 0; background: rgba(0,0,0,0.75); z-index: 1000; justify-content: center; align-items: center; padding: 20px; box-sizing: border-box; }
+        .modal-kutu { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 24px; width: 100%; max-width: 420px; box-sizing: border-box; box-shadow: 0 20px 50px rgba(0,0,0,0.6); }
+        .modal-kutu h3 { margin: 0 0 6px; font-size: 18px; color: var(--text); display: flex; align-items: center; gap: 8px; }
+        .modal-kimlik { color: var(--volt); font-weight: bold; margin: 0 0 16px; font-size: 13px; }
+        .modal-aksiyonlar { display: flex; gap: 10px; margin-top: 18px; }
+        .modal-aksiyonlar .btn { margin-top: 0; }
+        .btn-iptal { background: rgba(255,255,255,0.08); color: #ccc; border: 1px solid var(--border); padding: 12px 20px; border-radius: 8px; font-weight: bold; cursor: pointer; width: 100%; }
+        .btn-iptal:hover { background: rgba(255,255,255,0.15); }
+        .rehber-baslik { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; border-bottom: 1px solid var(--border); padding-bottom: 10px; margin-bottom: 5px; }
+        .rehber-baslik h2 { border: none; padding-bottom: 0; margin-bottom: 0; }
+        .btn-toplu { background: rgba(16,185,129,0.1); color: var(--green); border: 1px solid rgba(16,185,129,0.2); padding: 8px 14px; border-radius: 8px; font-size: 13px; font-weight: bold; cursor: pointer; white-space: nowrap; transition: var(--transition); display: inline-flex; align-items: center; gap: 6px; }
+        .btn-toplu:hover { background: var(--green); color: white; }
+        textarea { width: 100%; padding: 12px; background: var(--surface-2); border: 1px solid var(--border); color: white; border-radius: 8px; box-sizing: border-box; outline: none; font-family: inherit; font-size: 14px; resize: vertical; }
+        textarea:focus { border-color: var(--volt); }
+
+        /* Role info box */
+        .rol-info-kutu { padding: 14px 16px; background: rgba(59,130,246,0.1); border: 1px solid rgba(59,130,246,0.2); border-radius: 10px; color: #fff; font-size: 14px; display: flex; align-items: center; gap: 12px; }
+        .rol-info-kutu .rol-ikon { color: #60a5fa; display: inline-flex; }
+        .rol-info-kutu .rol-baslik { font-weight: 600; color: #60a5fa; }
+        .rol-info-kutu .rol-aciklama { color: var(--gray); font-size: 11px; }
+
+        @media (max-width: 768px) {
+            body { padding: 15px 10px; overflow-x: hidden; }
+            .header { flex-direction: column; align-items: center; text-align: center; gap: 15px; } .header-sol { align-items: center; gap: 8px; }
+            .cikis-btn { width: 100%; margin: 0; padding: 16px; font-size: 16px; text-align: center; box-sizing: border-box; }
+            .grid { grid-template-columns: 1fr !important; display: flex; flex-direction: column; gap: 20px; width: 100%; }
+            .kutu { padding: 15px; width: 100%; box-sizing: border-box; }
+            input, select, .ana-btn { width: 100%; box-sizing: border-box; padding: 16px; font-size: 16px; }
+            #firmaTablosu, #rehberTablosu { display: block; width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; border-radius: 8px; }
+            .firma-aksiyonlar { flex-direction: column; width: 100%; gap: 8px; } .sil-btn, .toggle-btn { width: 100%; text-align: center; padding: 12px; box-sizing: border-box; }
+        }
+    </style>
+    <!-- DOMPurify v3, served locally -->
+    <script src="/libs/purify.min.js"></script>
+</head>
+<body>
+
+    <div id="yetkiHata">
+        <span class="uyari-ikon"><svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg></span>
+        <h2>Erişim Engellendi</h2>
+        <p>Sadece Merkez Komuta yetkilileri bu alanı görebilir.</p>
+    </div>
+
+    <div class="header">
+        <div class="header-sol">
+            <svg width="40" height="40" viewBox="0 0 80 80" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <rect width="80" height="80" rx="14" fill="#0A0A0A" stroke="#222" stroke-width="1"/>
+                <path d="M22 18 L22 62" stroke="#FFFFFF" stroke-width="7" stroke-linecap="round"/>
+                <path d="M22 18 Q50 18 50 32 Q50 46 22 46" stroke="#FFFFFF" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+                <path d="M50 32 L64 32" stroke="#DFFF00" stroke-width="4" stroke-linecap="round"/>
+                <circle cx="64" cy="32" r="5" fill="#DFFF00"/>
+            </svg>
+            <h1>PAX<span class="marka-volt">ROUTE</span> <span class="marka-gri">| Merkez Komuta</span></h1>
+            <div class="badge">SÜPER ADMIN MODU</div>
+        </div>
+        <button id="cikisBtn" class="cikis-btn">Çıkış Yap</button>
+    </div>
+
+    <div class="grid">
+        <!-- Left: company list -->
+        <div class="kutu">
+            <h2>Aktif Firmalar (Müşterileriniz)</h2>
+            <table id="firmaTablosu">
+                <thead>
+                    <tr><th>Firma Adı</th><th>Sistem Modu</th><th>Durum</th><th>Kayıt Tarihi</th><th>İşlemler</th></tr>
+                </thead>
+                <tbody id="firmaListesi"></tbody>
+            </table>
+        </div>
+
+        <!-- Right: actions -->
+        <div>
+            <div class="kutu mb-20">
+                <h2>1. Yeni Firma Aç</h2>
+                <div class="form-grup">
+                    <label>Firma / Marka Adı</label>
+                    <input type="text" id="yeniFirmaAdi" placeholder="Örn: Örnek Lojistik">
+                </div>
+                <!-- Modules; each module's settings sit right below it and are hidden while it is off -->
+                <div class="form-grup">
+                    <label><input type="checkbox" id="firmaShuttleAktif" checked> Shuttle Hizmeti (servis / VIP transfer)</label>
+                </div>
+                <div id="shuttleAyarGrup">
+                    <div class="form-grup">
+                        <label>Shuttle Çalışma Modu</label>
+                        <select id="sistemModu">
+                            <option value="HARITA">VIP: Haritadan Kapı Konumu Seçimi</option>
+                            <option value="DURAK">SERVIS: Sabit Durak / Güzergah Listesi</option>
+                        </select>
+                    </div>
+                    <div class="form-grup">
+                        <label>Toplam Araç Kotası (shuttle fiyat tabanı)</label>
+                        <input type="number" id="firmaToplamKota" min="1" max="1000" value="1">
+                    </div>
+                </div>
+
+                <div class="form-grup">
+                    <label><input type="checkbox" id="firmaValeAktif"> Vale Hizmeti (kapıdan araç alma/teslim)</label>
+                </div>
+                <div class="form-grup gizli" id="valeKotaGrup">
+                    <label>Vale Kotası (fiyat tabanı — vale personeli sayısı)</label>
+                    <input type="number" id="firmaValeKota" min="1" max="500" value="1">
+                </div>
+
+                <div class="form-grup">
+                    <label><input type="checkbox" id="firmaSubeli"> Şubeli firma (birden çok şube)</label>
+                </div>
+                <div class="form-grup gizli" id="maxSubeGrup">
+                    <label>Azami Şube Sayısı</label>
+                    <input type="number" id="firmaMaxSube" min="1" max="100" value="1">
+                </div>
+
+                <!-- KVKK: these two fields are printed in the privacy notice the company's customers see.
+                     For passengers and valet customers the data controller is this company, not
+                     the platform. They are required; without them the notice would name no
+                     data controller. -->
+                <div class="form-grup">
+                    <label>KVKK — Ticaret Sicilindeki Tam Ünvan</label>
+                    <input type="text" id="firmaKvkkUnvan" placeholder="Örn: Örnek Firma Ticaret A.Ş." maxlength="120">
+                    <small class="alan-ipucu">Müşterinin gördüğü aydınlatma metninde "Veri Sorumlusu" olarak bu yazar.</small>
+                </div>
+                <div class="form-grup">
+                    <label>KVKK — Başvuru Kanalı</label>
+                    <input type="text" id="firmaKvkkBasvuru" placeholder="Örn: kvkk@ornekfirma.com.tr" maxlength="120">
+                    <small class="alan-ipucu">Müşteri KVKK m.11 haklarını buraya başvurarak kullanır (e-posta, KEP veya adres).</small>
+                </div>
+                <div class="form-grup">
+                    <label>KVKK — Tebligat Adresi <span class="opsiyonel-etiket">opsiyonel</span></label>
+                    <input type="text" id="firmaKvkkAdres" placeholder="Örn: Örnek Cad. No:1 Bornova/İzmir" maxlength="200">
+                    <small class="alan-ipucu">Yazılı (ıslak imzalı) başvuru yapmak isteyen müşteri için. Ünvan + başvuru kanalı zaten yeterlidir; bu alan tamamlayıcıdır.</small>
+                </div>
+
+                <button id="firmaOlusturBtn" class="btn btn-green">Firmayı Kur</button>
+            </div>
+
+            <div class="kutu">
+                <h2>2. Firmaya Yetkili Ata</h2>
+                <div class="form-grup"><label>Firma Seçin</label><select id="firmaSecici"></select></div>
+                <div class="form-grup">
+                    <label>Yetki Rolü</label>
+                    <div class="rol-info-kutu">
+                        <span class="rol-ikon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg></span>
+                        <div>
+                            <div class="rol-baslik">Firma Yöneticisi (ADMIN)</div>
+                            <small class="rol-aciklama">Süperadmin yalnızca ADMIN atayabilir</small>
+                        </div>
+                    </div>
+                    <!-- Hidden input: users created here are always ADMIN -->
+                    <input type="hidden" id="rolSecici" value="ADMIN">
+                </div>
+                <div class="form-grup"><label>Kullanıcı Adı</label><input type="text" id="yeniKullaniciAdi" placeholder="Örn: ornek_admin"><small class="telefon-altyazi">Türkçe karakter kullanılamaz; yazarken otomatik çevrilir (Ayşe Yılmaz → Ayse_Yilmaz).</small></div>
+                <div class="form-grup"><label>E-posta (Davet için)</label><input type="email" id="yeniEmail" placeholder="ornek@ornekfirma.com.tr"></div>
+                <div class="form-grup">
+                    <label>Telefon</label>
+                    <div class="telefon-satir">
+                        <span class="telefon-prefix">+90</span>
+                        <input type="tel" id="yeniTelefon" class="telefon-input" placeholder="5XX XXX XX XX" maxlength="10" inputmode="numeric">
+                    </div>
+                    <small class="telefon-altyazi">Başında 0 olmadan 10 hane; +90 otomatik eklenir.</small>
+                </div>
+                <div class="form-grup checkbox-grup">
+                    <input type="checkbox" id="mailGonderCheck" checked>
+                    <label for="mailGonderCheck">Hesap oluşturulduktan sonra otomatik davet maili gönder</label>
+                </div>
+                <button id="kullaniciOlusturBtn" class="btn">Yetkili Ata & Davet Et</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Company and admin contact list -->
+    <div class="kutu rehber-kutu">
+        <div class="rehber-baslik">
+            <h2>Firma &amp; Yönetici Rehberi</h2>
+            <button id="topluMailBtn" class="btn-toplu"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path><polyline points="22,6 12,13 2,6"></polyline></svg>Toplu Mail Gönder</button>
+        </div>
+        <table id="rehberTablosu">
+            <thead>
+                <tr><th>Firma</th><th>Yönetici</th><th>E-posta</th><th>Telefon</th><th>İşlem</th></tr>
+            </thead>
+            <tbody id="rehberListesi"></tbody>
+        </table>
+    </div>
+
+    <!-- Edit admin dialog -->
+    <div id="duzenleOverlay" class="overlay-gizli">
+        <div class="modal-kutu">
+            <h3>Yönetici Bilgilerini Düzenle</h3>
+            <p id="duzenleKimlik" class="modal-kimlik"></p>
+            <div class="form-grup"><label>E-posta</label><input type="email" id="duzenleEmail" placeholder="ornek@ornekfirma.com.tr"></div>
+            <div class="form-grup">
+                <label>Telefon</label>
+                <div class="telefon-satir">
+                    <span class="telefon-prefix">+90</span>
+                    <input type="tel" id="duzenleTelefon" class="telefon-input" placeholder="5XX XXX XX XX" maxlength="10" inputmode="numeric">
+                </div>
+                <small class="telefon-altyazi">Başında 0 olmadan 10 hane. Boş bırakırsanız silinir.</small>
+            </div>
+            <div class="modal-aksiyonlar">
+                <button id="duzenleVazgecBtn" class="btn-iptal">Vazgeç</button>
+                <button id="duzenleKaydetBtn" class="btn">Kaydet</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Announcement e-mail dialog -->
+    <div id="topluMailOverlay" class="overlay-gizli">
+        <div class="modal-kutu">
+            <h3>Tüm Yöneticilere Toplu Mail</h3>
+            <p class="modal-kimlik">E-postası tanımlı tüm firma yöneticilerine (ADMIN) gönderilir.</p>
+            <div class="form-grup"><label>Konu</label><input type="text" id="topluKonu" placeholder="Örn: Planlı Bakım Bildirimi" maxlength="200"></div>
+            <div class="form-grup"><label>Mesaj</label><textarea id="topluMesaj" rows="7" placeholder="Mesajınızı yazın..." maxlength="5000"></textarea></div>
+            <div class="modal-aksiyonlar">
+                <button id="topluVazgecBtn" class="btn-iptal">Vazgeç</button>
+                <button id="topluGonderBtn" class="btn">Gönder</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Invitation link dialog -->
+    <div id="davetOverlay" class="overlay-gizli">
+        <div class="modal-kutu">
+            <h3>✅ Kullanıcı Oluşturuldu</h3>
+            <p id="davetKimlik" class="modal-kimlik"></p>
+            <label style="font-size: 12px; color: var(--gray); display: block; margin-bottom: 6px;">Davet Linki</label>
+            <div id="davetLinkKutu" style="background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 12px; font-size: 12px; color: var(--text); word-break: break-all; font-family: 'SFMono-Regular', Consolas, monospace; max-height: 90px; overflow-y: auto; line-height: 1.5;"></div>
+            <small style="display: block; color: var(--gray); margin-top: 8px; font-size: 12px;">Bu linki yetkiliye iletin; şifresini belirleyip giriş yapacaktır.</small>
+            <div class="modal-aksiyonlar" style="flex-wrap: wrap;">
+                <button id="davetKopyaBtn" class="btn" style="flex: 1;">Linki Kopyala</button>
+                <button id="davetWpBtn" class="btn" style="flex: 1;">WhatsApp</button>
+                <button id="davetKapatBtn" class="btn-iptal" style="flex: 1;">Kapat</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="config.js"></script>
+    <script src="js/superadmin.js"></script>
+    <!-- The staff panels have no service worker, so an open tab does not pick up a deploy by
+         itself. This script watches CACHE_VERSION in sw.js and shows a "new version" banner. -->
+    <script src="js/surum-kontrol.js"></script>
+</body>
+</html>

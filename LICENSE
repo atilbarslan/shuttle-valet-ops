@@ -1,0 +1,9 @@
+Copyright (c) 2026 Atıl Buğrahan Arslan. All rights reserved.
+
+The source code in this repository is published for viewing and evaluation only, as part of
+the author's portfolio. No permission is granted to use, copy, modify, merge, publish,
+distribute, sublicense or sell any part of it without the author's prior written consent.
+
+Third-party components keep their own licenses: DOMPurify (frontend/libs/purify.min.js,
+Apache License 2.0 / Mozilla Public License 2.0) and the Inter font (frontend/fonts/,
+SIL Open Font License 1.1, see frontend/fonts/OFL.txt).

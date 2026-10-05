@@ -1,0 +1,36 @@
+# Secrets
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# Editors and OS
+.DS_Store
+.vscode/
+.idea/
+
+# Archives
+*.zip
+
+# Logs and database dumps
+*.log
+logs/
+*.dump
+*.sql.gz
+*.sqlite
+*.sqlite3
+
+# Node (no build step today, but keep tool output out of the repo)
+node_modules/
+
+# Test and coverage output
+.pytest_cache/
+.coverage
+htmlcov/

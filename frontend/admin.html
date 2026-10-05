@@ -1,0 +1,549 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shuttle &amp; Valet Ops | Firma Yönetim Paneli</title>
+    <!-- 'unsafe-eval' is required by Mapbox GL; scripts are never inline -->
+    <!-- Content Security Policy: replace YOUR_DOMAIN with the domain the app is served from
+         (for example app.example.com) so the page may call the API (https://) and the live
+         WebSocket (wss://). The localhost entries are only for local development. -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-eval' https://api.mapbox.com; style-src 'self' 'unsafe-inline' https://api.mapbox.com; connect-src 'self' http://127.0.0.1:8000 ws://127.0.0.1:8000 http://localhost:8000 ws://localhost:8000 https://YOUR_DOMAIN wss://YOUR_DOMAIN https://api.mapbox.com https://events.mapbox.com; worker-src blob:; img-src 'self' data: blob: https://api.mapbox.com https://*.basemaps.cartocdn.com;">
+    <link href="https://api.mapbox.com/mapbox-gl-js/v3.3.0/mapbox-gl.css" rel="stylesheet">
+    <style>
+        @font-face {
+            font-family: 'Inter';
+            src: url('fonts/InterVariable.woff2') format('woff2');
+            font-weight: 100 900;
+            font-style: normal;
+            font-display: swap;
+        }
+        :root { --p: #DFFF00; --bg: #0d0d12; --surface: rgba(25,25,32,0.6); --surface-2: rgba(0,0,0,0.3); --border: rgba(255,255,255,0.08); --text: #ffffff; --text-2: #8a8f98; --blue: #3b82f6; --green: #10b981; --orange: #f59e0b; --red: #ef4444; --sidebar: rgba(20,20,26,0.7); --volt: #DFFF00; --volt-hover: #e8ff4d; --radius-lg: 16px; --radius-md: 12px; --panel: #16161c; }
+        * { box-sizing: border-box; }
+        body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; background: var(--bg); background-image: radial-gradient(circle at 15% 50%, rgba(223,255,0,0.02), transparent 25%), radial-gradient(circle at 85% 30%, rgba(59,130,246,0.03), transparent 25%); margin: 0; color: var(--text); display: flex; height: 100vh; overflow: hidden; }
+        .filtre-butonlari { display: flex; gap: 10px; background: var(--surface-2); padding: 5px; border-radius: 10px; }
+        .filtre-btn { padding: 8px 20px; border: none; background: transparent; border-radius: 8px; font-weight: bold; cursor: pointer; color: var(--text-2); transition: 0.2s; font-size: 13px; }
+        .filtre-btn.active { background: var(--volt); color: #000; }
+        .sidebar { width: 260px; background: var(--sidebar); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border-right: 1px solid var(--border); color: white; display: flex; flex-direction: column; padding: 25px 0; z-index: 1000; }
+        .sidebar-logo { padding: 0 25px 30px 25px; border-bottom: 1px solid var(--border); margin-bottom: 20px; }
+        .sidebar-logo h2 { margin: 0; font-size: 22px; letter-spacing: -1px; }
+        .sidebar-logo > span { font-size: 12px; color: var(--text-2); font-weight: normal; }
+        .nav-menu { display: flex; flex-direction: column; gap: 5px; padding: 0 15px; }
+        .nav-item { padding: 15px 20px; border-radius: 12px; color: var(--text-2); text-decoration: none; font-weight: 600; cursor: pointer; transition: 0.2s; display: flex; align-items: center; gap: 10px; }
+        .nav-item:hover { background: rgba(255,255,255,0.05); color: white; }
+        .nav-item.active { background: rgba(223,255,0,0.1); color: var(--volt); border-left: 3px solid var(--volt); }
+        .cikis-btn { margin-top: auto; margin-inline: 15px; background: rgba(239,68,68,0.1); color: var(--red); text-align: center; justify-content: center; border: 1px solid rgba(239,68,68,0.2); }
+        .cikis-btn:hover { background: var(--red); color: white; }
+        .main-content { flex: 1; padding: 30px 40px; overflow-y: auto; position: relative; }
+        .header-area { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; }
+        .header-area h1 { margin: 0; font-size: 24px; letter-spacing: -1px; }
+        .sayfa-gorunumu { display: none; animation: fadeIn 0.3s ease; }
+        .sayfa-gorunumu.active { display: block; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .grid-container { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin-bottom: 25px; }
+        .kart { background: var(--surface); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); padding: 25px; border-radius: var(--radius-lg); box-shadow: 0 8px 32px rgba(0,0,0,0.4); border: 1px solid var(--border); border-top: 3px solid var(--blue); }
+        .kart h4 { margin: 0; font-size: 12px; color: var(--text-2); text-transform: uppercase; letter-spacing: 0.5px; }
+        .kart > span { font-size: 40px; font-weight: 800; display: block; margin-top: 10px; }
+        .green-border { border-top-color: var(--green); } .orange-border { border-top-color: var(--orange); }
+        .black-border { border-top-color: var(--volt); } .red-border { border-top-color: var(--red); }
+        .konum-ayar-alani { background: rgba(245,158,11,0.1); border: 1px solid rgba(245,158,11,0.25); border-radius: 10px; padding: 12px 16px; margin-bottom: 15px; font-size: 13px; color: #fcd34d; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+        .konum-ayar-btn { background: var(--volt); color: #000; border: none; padding: 8px 14px; border-radius: 8px; font-size: 12px; font-weight: bold; cursor: pointer; white-space: nowrap; }
+        #map-container { background: var(--surface); padding: 12px; border-radius: 20px; box-shadow: 0 10px 40px rgba(0,0,0,0.4); border: 1px solid var(--border); height: calc(100vh - 290px); min-height: 400px; position: relative; }
+        #map { height: 100%; width: 100%; border-radius: 12px; }
+        #konumOnayPanel span { font-size: 14px; font-weight: 600; color: var(--text); }
+        .konum-onayla-btn { background: var(--green); color: white; border: none; padding: 10px 18px; border-radius: 8px; font-weight: bold; cursor: pointer; font-size: 14px; }
+        .konum-iptal-btn { background: rgba(255,255,255,0.08); color: var(--text-2); border: none; padding: 10px 14px; border-radius: 8px; font-weight: bold; cursor: pointer; font-size: 14px; }
+        .bus-marker { font-size: 28px; text-align: center; cursor: pointer; }
+        /* Valet marker: a plain gold dot, so valets stand apart from shuttle vehicles */
+        .vale-marker { width: 20px; height: 20px; border-radius: 50%; background: #EAB308; border: 3px solid #0d0d12; box-shadow: 0 0 0 2px #EAB308, 0 2px 6px rgba(0,0,0,0.5); cursor: pointer; }
+        .marker-vale-rozet { background: #EAB308; color: #000; font-size: 10px; font-weight: 800; padding: 1px 6px; border-radius: 4px; letter-spacing: 0.5px; }
+        /* "Last known position" in the map popup: a timestamped moment, not a live position */
+        .marker-son-gorulme { font-size: 11px; color: #666; }
+        .form-input { width: 100%; padding: 14px; background: var(--surface-2); border: 1px solid var(--border); color: var(--text); border-radius: 10px; margin-bottom: 15px; box-sizing: border-box; font-size: 14px; outline: none; transition: 0.2s; }
+        .form-input:focus { border-color: var(--volt); }
+        select.form-input option { background: var(--panel); color: var(--text); }
+        .ana-btn { width: 100%; padding: 15px; background: var(--volt); color: #000; border: none; border-radius: 10px; font-weight: bold; cursor: pointer; font-size: 15px; transition: 0.2s; box-shadow: 0 4px 15px rgba(223,255,0,0.2); }
+        .ana-btn:hover { background: var(--volt-hover); }
+        .personel-satir { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); padding: 15px 0; }
+        .sil-btn { color: var(--red); background: rgba(239,68,68,0.1); border: none; padding: 8px 15px; border-radius: 8px; cursor: pointer; font-size: 12px; font-weight: bold; }
+        #yetkiHata { display: none; background: var(--bg); color: white; padding: 30px; text-align: center; height: 100vh; flex-direction: column; justify-content: center; align-items: center; }
+        .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 2000; justify-content: center; align-items: center; backdrop-filter: blur(5px); }
+        .modal-kutu { background: var(--panel); border: 1px solid var(--border); padding: 30px; border-radius: 20px; width: 90%; max-width: 400px; text-align: center; box-shadow: 0 20px 50px rgba(0,0,0,0.6); animation: fadeIn 0.3s ease; }
+        .modal-kutu h3 { margin-top: 0; color: var(--green); font-size: 22px; margin-bottom: 5px; }
+        .link-kutu { background: var(--surface-2); padding: 15px; border-radius: 10px; font-family: monospace; word-break: break-all; margin: 20px 0; border: 1px solid var(--border); font-size: 13px; color: var(--text-2); }
+        .modal-btn-grup { display: flex; flex-direction: column; gap: 10px; }
+        .m-btn { padding: 14px; border: none; border-radius: 12px; font-weight: bold; cursor: pointer; font-size: 15px; transition: 0.2s; display: flex; align-items: center; justify-content: center; gap: 8px; }
+        .m-kopya { background: rgba(255,255,255,0.1); color: var(--text); } .m-kopya:hover { background: rgba(255,255,255,0.15); }
+        .m-wp { background: rgba(16,185,129,0.15); color: var(--green); border: 1px solid rgba(16,185,129,0.25); } .m-wp:hover { background: rgba(16,185,129,0.25); }
+        .m-mail { background: rgba(59,130,246,0.15); color: #60a5fa; border: 1px solid rgba(59,130,246,0.25); } .m-mail:hover { background: rgba(59,130,246,0.25); }
+        .m-kapat { background: transparent; color: var(--text-2); margin-top: 5px; } .m-kapat:hover { color: var(--text); }
+        @media (max-width: 768px) {
+            body { flex-direction: column; }
+            .sidebar { width: 100%; height: auto; padding: 8px; flex-direction: row; justify-content: space-between; align-items: center; position: fixed; bottom: 0; left: 0; z-index: 2000; box-sizing: border-box; box-shadow: 0 -5px 20px rgba(0,0,0,0.5); }
+            .sidebar-logo { display: none; }
+            .nav-menu { flex-direction: row; width: 100%; justify-content: space-between; padding: 0; gap: 5px; }
+            .nav-item { padding: 10px 5px; font-size: 11px; flex-direction: column; gap: 4px; text-align: center; flex: 1; border-radius: 10px; justify-content: center; }
+            .cikis-btn { margin: 0; padding: 10px 5px; }
+            .main-content { padding: 15px; padding-bottom: 90px; height: 100vh; overflow-y: auto; box-sizing: border-box; }
+            .header-area { flex-direction: column; align-items: flex-start; gap: 15px; }
+            .filtre-butonlari { width: 100%; justify-content: space-between; }
+            .grid-container { grid-template-columns: 1fr !important; gap: 15px; }
+            #map-container { height: 60vh; min-height: 350px; }
+            .personel-satir { flex-direction: column; align-items: flex-start; gap: 12px; }
+            .sil-btn { width: 100%; padding: 12px; }
+        }
+        .personel-aksiyonlar { display: flex; gap: 8px; margin-top: 10px; }
+        .sifre-sifirla-btn { background: var(--blue); color: white; border: none; padding: 10px 15px; border-radius: 8px; cursor: pointer; font-weight: bold; font-size: 13px; flex: 2; display: flex; align-items: center; justify-content: center; gap: 5px; transition: background 0.2s; }
+        .sifre-sifirla-btn:hover { background: #2563eb; }
+        .sil-btn { flex: 1; padding: 10px; font-size: 13px; margin: 0 !important; }
+        .akordeon-grup { background: var(--surface-2); border: 1px solid var(--border); border-radius: 12px; margin-bottom: 12px; overflow: hidden; }
+        .akordeon-baslik { padding: 16px; background: rgba(255,255,255,0.03); display: flex; justify-content: space-between; align-items: center; cursor: pointer; font-weight: bold; font-size: 15px; border-bottom: 1px solid transparent; transition: 0.2s; }
+        .akordeon-baslik:hover { background: rgba(255,255,255,0.06); }
+        .akordeon-icerik { display: none; padding: 0 15px; background: transparent; }
+        .akordeon-acik { display: block !important; }
+        .kisi-sayisi { color: var(--text-2); font-size: 13px; font-weight: normal; }
+        .marka-rozet { background: var(--volt); color: #000; padding: 4px 10px; border-radius: 6px; font-size: 13px !important; font-weight: bold; margin-right: 8px; display: inline-block; }
+        .plaka-etiket { color: var(--text-2); font-size: 11px !important; font-weight: normal; background: var(--surface-2); padding: 2px 6px; border-radius: 4px; margin-left: 5px; }
+
+        /* appModal styles */
+        .pxm-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 99999; display: none; align-items: center; justify-content: center; padding: 20px; animation: pxmFadeIn 0.2s ease-out; }
+        .pxm-overlay.acik { display: flex; }
+        @keyframes pxmFadeIn { from {opacity: 0;} to {opacity: 1;} }
+        .pxm-kutu { background: var(--panel); border: 1px solid var(--border); border-radius: 16px; padding: 24px; max-width: 420px; width: 100%; box-shadow: 0 20px 60px rgba(0,0,0,0.6); animation: pxmSlide 0.25s ease-out; }
+        @keyframes pxmSlide { from {transform: translateY(20px); opacity: 0;} to {transform: translateY(0); opacity: 1;} }
+        .pxm-baslik { font-size: 18px; font-weight: 700; color: var(--text); margin: 0 0 8px 0; letter-spacing: -0.3px; }
+        .pxm-aciklama { font-size: 13px; color: var(--text-2); margin: 0 0 16px 0; line-height: 1.5; white-space: pre-line; }
+        .pxm-input, .pxm-textarea { width: 100%; padding: 12px 14px; background: var(--surface-2); border: 1.5px solid var(--border); border-radius: 10px; font-size: 15px; font-family: inherit; box-sizing: border-box; transition: border-color 0.15s; outline: none; color: var(--text); }
+        .pxm-input:focus, .pxm-textarea:focus { border-color: var(--volt); }
+        .pxm-textarea { min-height: 80px; resize: vertical; display: none; }
+        .pxm-hata { color: var(--red); font-size: 12px; margin: 6px 0 0 0; display: none; }
+        .pxm-hata.gosterilsin { display: block; }
+        .pxm-butonlar { display: flex; gap: 10px; margin-top: 20px; justify-content: flex-end; }
+        .pxm-btn { padding: 11px 22px; border-radius: 10px; border: none; font-size: 14px; font-weight: 600; cursor: pointer; transition: opacity 0.15s, transform 0.1s; font-family: inherit; }
+        .pxm-btn:active { transform: scale(0.97); }
+        .pxm-btn-iptal { background: rgba(255,255,255,0.08); color: var(--text); }
+        .pxm-btn-onay { background: var(--volt); color: #000; }
+        .pxm-btn:hover { opacity: 0.85; }
+        @media (max-width: 480px) { .pxm-kutu {padding: 20px;} .pxm-butonlar {flex-direction: column-reverse;} .pxm-btn {width: 100%; padding: 13px;} }
+
+        /* Styles moved out of inline style attributes into classes */
+
+        /* === Permission error === */
+        .yetki-hata-ikon { color: var(--red); margin-bottom: 20px; display: inline-flex; }
+
+        /* === App container === */
+        #appContainer { display: none; width: 100%; }
+
+        /* === Sidebar logo === */
+        .sidebar-logo-row { display: flex; align-items: center; gap: 10px; }
+        .marka-volt-bg { color: var(--volt); }
+        .gizli { display: none; }
+        .kota-bilgi { font-size: 13px; color: var(--text-2); margin: 0 0 8px; font-weight: 500; }
+        #subeKotaOzet { margin: 4px 0 12px; font-size: 14px; color: var(--text); }
+        .sube-satir { display: flex; justify-content: space-between; align-items: center; padding: 8px 10px; border-top: 1px solid var(--border); font-size: 14px; }
+        .marka-satir { display: flex; justify-content: space-between; align-items: center; padding: 8px 10px; border-top: 1px solid var(--border); font-size: 14px; }
+        .marka-bos { color: var(--text-2); font-size: 13px; margin: 12px 2px 0; }
+        .sube-btn-kucuk { padding: 4px 12px; font-size: 12px; }
+
+        /* === Operations nav item === */
+        .nav-item-operasyon { color: #60a5fa; }
+
+        /* === grid-container override in the header === */
+        .grid-container-3 { grid-template-columns: 1fr 1fr 1fr; }
+        .grid-container-12-8 { grid-template-columns: 1.2fr 0.8fr; margin-top: 20px; }
+
+        /* === Padding inside form cards === */
+        .form-kart-icerik { margin-top: 15px; }
+
+        /* === Phone field container === */
+        .telefon-konteyner { margin-bottom: 15px; }
+        .telefon-input-mb0 { margin-bottom: 0; }
+        .telefon-altyazi { display: block; margin-top: 6px; color: var(--text-2); font-size: 11px; }
+
+        /* === Staff/vehicle list spacing === */
+        .liste-konteyner { margin-top: 15px; }
+
+        /* === Base location card === */
+        .firma-merkez-kart { margin-top: 20px; }
+        .firma-merkez-aciklama { color: var(--text-2); font-size: 13px; margin: 8px 0 12px; }
+        #konumUyari { display: none; background: rgba(245,158,11,0.12); color: #fcd34d; padding: 10px 14px; border-radius: 8px; font-size: 13px; margin-bottom: 12px; }
+        .konum-secim-btn { margin-bottom: 12px; }
+        /* Company and branch badge for branch admins (in the header, so it is visible on phones where the sidebar is hidden) */
+        .firma-sube-rozet { display: none; background: var(--surface-2); border: 1px solid var(--border); color: var(--text-2); padding: 6px 14px; border-radius: 20px; font-size: 13px; font-weight: 600; white-space: nowrap; }
+        /* Once a base location is set, the button becomes small and secondary */
+        .konum-btn-kompakt { width: auto; padding: 8px 16px; font-size: 13px; background: var(--surface-2); color: var(--text); border: 1px solid var(--border); box-shadow: none; }
+        .konum-btn-kompakt:hover { background: rgba(255,255,255,0.06); }
+        #konumOnayPanel { background: rgba(16,185,129,0.12); border: 1px solid rgba(16,185,129,0.25); padding: 10px 14px; border-radius: 8px; margin-bottom: 12px; display: none; align-items: center; gap: 10px; }
+        .konum-onay-yazi { font-size: 13px; }
+        #merkez-map { height: 280px; border-radius: 12px; border: 1px solid var(--border); }
+
+        /* === Route and stop management === */
+        #durakYonetimAlani { margin-top: 20px; display: none; }
+        .durak-yonetim-aciklama { color: var(--text-2); font-size: 13px; margin: 8px 0 12px; }
+        .durak-yonetim-grid { display: flex; gap: 20px; flex-wrap: wrap; }
+        .durak-yonetim-sol { flex: 1; min-width: 250px; }
+        .guzergah-ekle-row { display: flex; gap: 10px; margin-bottom: 15px; }
+        .guzergah-ekle-input { margin-bottom: 0; }
+        .guzergah-ekle-btn { width: auto; padding: 0 20px; }
+        #guzergahListesi { max-height: 300px; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; padding: 5px; }
+        .durak-yonetim-sag { flex: 2; min-width: 300px; position: relative; }
+        #aktifGuzergahBilgi { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); z-index: 1000; background: rgba(59,130,246,0.9); color: white; padding: 8px 16px; border-radius: 20px; font-size: 13px; font-weight: bold; display: none; pointer-events: none; }
+        #durak-map { height: 350px; border-radius: 12px; border: 1px solid var(--border); cursor: crosshair; }
+
+        /* === Report table spacing === */
+        .rapor-konteyner { margin-top: 10px; }
+        .rapor-yukleniyor { color: var(--text-2); text-align: center; padding: 30px; }
+
+        /* === Invitation dialog === */
+        .davet-modal-ikon { color: var(--green); margin-bottom: 10px; display: inline-flex; }
+        .davet-modal-aciklama { font-size: 14px; color: var(--text-2); margin: 0; }
+
+        /* === Mapbox markers === */
+        .mapbox-merkez-marker { font-size: 28px; text-align: center; }
+        .mapbox-gecici-marker { font-size: 28px; text-align: center; }
+        .yolcu-marker { width: 16px; height: 16px; border-radius: 50%; border: 2px solid white; box-shadow: 0 2px 4px rgba(0,0,0,0.3); }
+        .marker-marka-rozet { font-size: 10px; background: var(--surface-2); padding: 2px 6px; border-radius: 4px; color: var(--text-2); }
+        .marker-arac-bilgi { font-size: 12px; color: var(--text-2); }
+
+        /* === Numbered stop marker === */
+        .durak-marker-numara { background: #000; color: #DFFF00; border-radius: 50%; width: 26px; height: 26px; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 13px; border: 2px solid white; box-shadow: 0 3px 6px rgba(0,0,0,0.3); }
+
+        /* === Mapbox popup in the dark theme (instead of the default white box) === */
+        .mapboxgl-popup-content { background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; font-size: 13px; box-shadow: 0 8px 24px rgba(0,0,0,0.5); }
+        .mapboxgl-popup-close-button { color: var(--text-2); font-size: 16px; padding: 0 6px; }
+        .mapboxgl-popup-close-button:hover { background: transparent; color: var(--text); }
+        /* The popup's tip uses the popup background colour (on the side given by the anchor) */
+        .mapboxgl-popup-anchor-top .mapboxgl-popup-tip,
+        .mapboxgl-popup-anchor-top-left .mapboxgl-popup-tip,
+        .mapboxgl-popup-anchor-top-right .mapboxgl-popup-tip { border-bottom-color: var(--panel); }
+        .mapboxgl-popup-anchor-bottom .mapboxgl-popup-tip,
+        .mapboxgl-popup-anchor-bottom-left .mapboxgl-popup-tip,
+        .mapboxgl-popup-anchor-bottom-right .mapboxgl-popup-tip { border-top-color: var(--panel); }
+        .mapboxgl-popup-anchor-left .mapboxgl-popup-tip { border-right-color: var(--panel); }
+        .mapboxgl-popup-anchor-right .mapboxgl-popup-tip { border-left-color: var(--panel); }
+
+        /* === Stop popup === */
+        .durak-popup { text-align: center; }
+        .durak-popup-baslik { font-size: 14px; display: block; margin-bottom: 5px; }
+        .durak-sil-popup-btn { background: #ff3b30; color: white; border: none; padding: 5px 10px; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 11px; }
+
+        /* === Vehicle rows (built by the JS); !important so other rules cannot override them === */
+        .arac-satir { display: flex !important; flex-direction: column !important; gap: 10px !important; padding: 12px !important; border-bottom: 1px solid var(--border) !important; }
+        .arac-satir-ust { display: flex !important; justify-content: space-between !important; align-items: center !important; }
+        .arac-plaka-buyuk { font-size: 16px !important; }
+        .arac-sofor-info { font-size: 12px !important; color: var(--text-2) !important; }
+        .arac-sil-btn { background: rgba(239,68,68,0.1) !important; color: #f87171 !important; border: none !important; padding: 5px 10px !important; border-radius: 6px !important; cursor: pointer !important; }
+        .arac-guzergah-kutu { display: none; gap: 10px; align-items: center; background: var(--surface-2); padding: 6px; border-radius: 6px; }
+        .arac-guzergah-kutu.gosterilsin-flex { display: flex !important; }
+        .arac-guzergah-label { font-size: 11px !important; font-weight: bold !important; color: var(--text-2) !important; }
+        .arac-guzergah-select { flex: 1 !important; padding: 4px !important; font-size: 12px !important; background: var(--surface-2) !important; color: var(--text) !important; border: 1px solid var(--border) !important; border-radius: 4px !important; }
+
+        /* === Staff list (built by the JS); !important to win over inline styles and browser extensions */
+        .bos-personel-mesaj { text-align: center; color: var(--text-2); }
+        .personel-rol-row { margin-bottom: 2px !important; }
+        .personel-rol { font-size: 11px !important; font-weight: bold !important; }
+        .rol-sofor { color: #60a5fa !important; }
+        .rol-diger { color: #fbbf24 !important; }
+        .personel-kadi { font-size: 15px !important; }
+        /* Login username, hidden by default so it does not appear in screenshots. Clicking the
+           name reveals it when the admin needs it. */
+        .personel-kimlik { display: none; font-size: 11px; color: var(--text-2); opacity: .65; margin-left: 6px; font-family: 'JetBrains Mono', monospace; }
+        .personel-kimlik.gorunur { display: inline; }
+        .kimlik-acilir { cursor: pointer; border-bottom: 1px dotted rgba(255,255,255,0.18); }
+        .durum-bekliyor-rozet { background: rgba(245,158,11,0.15) !important; color: #fbbf24 !important; font-size: 10px !important; padding: 2px 6px !important; border-radius: 4px !important; margin-left: 8px !important; }
+        .durum-aktif-rozet { background: rgba(16,185,129,0.15) !important; color: #34d399 !important; font-size: 10px !important; padding: 2px 6px !important; border-radius: 4px !important; margin-left: 8px !important; }
+        .kes-btn { background: #ef4444 !important; color: white !important; border: none !important; padding: 6px 12px !important; border-radius: 8px !important; font-weight: bold !important; font-size: 11px !important; }
+        .ata-btn { background: #10b981 !important; color: white !important; border: none !important; padding: 6px 12px !important; border-radius: 8px !important; font-weight: bold !important; font-size: 11px !important; }
+        .sifre-kucuk { padding: 6px 12px !important; font-size: 11px !important; }
+        .sil-kucuk { padding: 6px 12px !important; font-size: 11px !important; }
+
+        /* === Route list (built by the JS) === */
+        .bos-guzergah-mesaj { padding: 15px; text-align: center; color: var(--text-2); font-size: 13px; }
+        .guzergah-satir { display: flex; justify-content: space-between; align-items: center; padding: 12px; margin-bottom: 5px; border-radius: 8px; cursor: pointer; transition: 0.2s; border: 1px solid var(--border); background: var(--surface-2); }
+        .guzergah-satir.guzergah-secili { border-color: var(--blue); background: rgba(59,130,246,0.12); }
+        .guzergah-ad { font-size: 14px; color: var(--text); }
+        .guzergah-ad-secili { color: #60a5fa; }
+        .guzergah-sil-btn { background: rgba(239,68,68,0.1); color: #f87171; border: none; padding: 5px 10px; border-radius: 6px; cursor: pointer; font-size: 11px; font-weight: bold; }
+        .guzergah-satir-sag { display: flex; align-items: center; gap: 6px; }
+        .guzergah-satir-sag .guzergah-tip-rozet { font-size: 11px; font-weight: bold; color: var(--text-2); white-space: nowrap; display: inline; margin-top: 0; }
+        .guzergah-tip-btn { background: rgba(59,130,246,0.15); color: #60a5fa; border: none; padding: 5px 10px; border-radius: 6px; cursor: pointer; font-size: 11px; font-weight: bold; }
+
+        /* === Report summary cards and table === */
+        .rapor-ozet-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; margin-bottom: 25px; }
+        .rapor-ozet-kart { text-align: center; }
+        .rapor-ozet-deger { font-size: 36px; font-weight: 900; }
+        .rapor-km-birim { font-size: 16px; color: var(--text-2); }
+        .rapor-tablo { width: 100%; border-collapse: collapse; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.3); }
+        .rapor-tablo-header { background: rgba(255,255,255,0.03); font-size: 12px; color: var(--text-2); text-transform: uppercase; letter-spacing: 1px; }
+        .rapor-th { padding: 14px 16px; }
+        .rapor-th-left { text-align: left; }
+        .rapor-th-center { text-align: center; }
+        .rapor-tablo-satir { border-top: 1px solid var(--border); font-size: 14px; }
+        .rapor-td { padding: 14px 16px; }
+        .rapor-td-center { text-align: center; }
+        .rapor-td-arac { font-weight: 700; }
+        .rapor-td-sofor { color: var(--text-2); }
+        .rapor-basarili { font-weight: 700; color: #34d399; }
+        /* === Punctuality report === */
+        .dakiklik-aciklama { color: var(--text-2); font-size: 13px; margin: 0 0 12px; line-height: 1.5; }
+        .dakiklik-erken { color: #fbbf24; font-weight: 700; }   /* early is a deviation too, not "good": amber */
+        .dakiklik-zamaninda { color: var(--text-1); font-weight: 700; }
+        .dakiklik-gec { color: #f87171; font-weight: 700; }
+        .dakiklik-satir-dikkat { background: rgba(248,113,113,0.07); }
+        .dakiklik-rozet { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 999px;
+            border: 1px solid rgba(248,113,113,0.4); color: #f87171; margin-left: 8px; vertical-align: middle; }
+        .dakiklik-yetersiz { font-size: 11px; color: var(--text-2); margin-left: 8px; vertical-align: middle; }
+        .dakiklik-uyari { color: #fbbf24; font-weight: 700; }
+        .dakiklik-notlar { color: var(--text-2); font-size: 12px; margin-top: 10px; line-height: 1.8; }
+        /* === Satisfaction tab === */
+        .mem-puan { font-weight: 800; }
+        .mem-puan-birim { font-size: 12px; color: var(--text-2); font-weight: 600; }
+        .mem-yok { color: var(--text-2); }
+        .mem-bolum-baslik { margin: 26px 0 10px; color: #c7f339; font-weight: 600; font-size: 1.1rem; }
+        .mem-yorum { background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+            padding: 14px 16px; margin-bottom: 10px; }
+        .mem-yorum-ust { display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+            font-size: 12px; color: var(--text-2); margin-bottom: 8px; }
+        .mem-yorum-puan { font-weight: 800; color: #eab308; }
+        /* Customer's comment: line breaks kept, never interpreted as HTML (escaped in the JS) */
+        .mem-yorum-metin { font-size: 14px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
+        .mem-rozet { font-size: 11px; padding: 2px 8px; border-radius: 999px;
+            border: 1px solid var(--border); color: var(--text-2); }
+        /* The defined term stands apart from its definition */
+        .dakiklik-terim { color: var(--text); font-weight: 600; }
+        .rapor-gelmeyen { font-weight: 700; color: #f87171; }
+        .rapor-km { font-weight: 700; }
+        .rapor-km-birim-alt { color: var(--text-2); }
+    </style>
+    <!-- DOMPurify v3, served locally -->
+    <script src="/libs/purify.min.js"></script>
+</head>
+<body>
+
+    <div id="yetkiHata">
+        <span class="yetki-hata-ikon"><svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg></span>
+        <h2>Yetkisiz Erişim</h2>
+        <p>Lütfen güvenli giriş kapısını kullanın.</p>
+    </div>
+
+    <!-- appModal (this panel's own dialog) -->
+    <div id="app-modal-overlay" class="pxm-overlay">
+        <div class="pxm-kutu" role="dialog" aria-modal="true">
+            <h3 class="pxm-baslik" id="pxm-baslik"></h3>
+            <p class="pxm-aciklama" id="pxm-aciklama"></p>
+            <input class="pxm-input" id="pxm-input" />
+            <textarea class="pxm-textarea" id="pxm-textarea"></textarea>
+            <p class="pxm-hata" id="pxm-hata"></p>
+            <div class="pxm-butonlar">
+                <button class="pxm-btn pxm-btn-iptal" id="pxm-iptal">Vazgeç</button>
+                <button class="pxm-btn pxm-btn-onay" id="pxm-onay">Tamam</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="appContainer">
+
+        <div class="sidebar">
+            <div class="sidebar-logo">
+                <div class="sidebar-logo-row">
+                    <svg width="34" height="34" viewBox="0 0 80 80" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <rect width="80" height="80" rx="14" fill="#0A0A0A"/>
+                        <path d="M22 18 L22 62" stroke="#FFFFFF" stroke-width="7" stroke-linecap="round"/>
+                        <path d="M22 18 Q50 18 50 32 Q50 46 22 46" stroke="#FFFFFF" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+                        <path d="M50 32 L64 32" stroke="#DFFF00" stroke-width="4" stroke-linecap="round"/>
+                        <circle cx="64" cy="32" r="5" fill="#DFFF00"/>
+                    </svg>
+                    <h2>PAX<span class="marka-volt-bg">ROUTE</span></h2>
+                </div>
+                <span id="firmaAdiSidebar">Yükleniyor...</span>
+            </div>
+
+            <div class="nav-menu">
+                <div class="nav-item active" data-aksiyon="sayfa-degistir" data-sayfa-id="ekip-yonetimi"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>Ekip Yönetimi</div>
+                <div class="nav-item" data-aksiyon="sayfa-degistir" data-sayfa-id="raporlar"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"></line><line x1="12" y1="20" x2="12" y2="4"></line><line x1="6" y1="20" x2="6" y2="14"></line></svg>Raporlar</div>
+                <div class="nav-item" id="memnuniyetNav" data-aksiyon="sayfa-degistir" data-sayfa-id="memnuniyet"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.9 6.3 6.6.9-4.8 4.7 1.2 6.6L12 17.4 6.1 20.5l1.2-6.6L2.5 9.2l6.6-.9z"></path></svg>Memnuniyet</div>
+                <div class="nav-item nav-item-operasyon" id="operasyonAcBtn"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>Operasyon Ekranı</div>
+                <div class="nav-item cikis-btn" id="cikisBtn"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>Çıkış Yap</div>
+            </div>
+        </div>
+
+        <div class="main-content">
+
+            <div id="ekip-yonetimi" class="sayfa-gorunumu active">
+                <div class="header-area">
+                    <h1>Ekip ve Filo Yönetimi</h1>
+                    <span id="firmaSubeRozet" class="firma-sube-rozet"></span>
+                </div>
+
+                <div id="subePanel" class="kart black-border gizli">
+                    <h4>ŞUBELER — Kota Dağıtımı</h4>
+                    <div id="subeKotaOzet"></div>
+                    <div class="form-kart-icerik">
+                        <input type="text" id="yeniSubeAdi" class="form-input" placeholder="Şube adı (Örn: Karşıyaka)">
+                        <input type="number" id="yeniSubeKota" class="form-input" min="0" value="0" placeholder="Aktif araç kotası">
+                        <button id="subeEkleBtn" class="ana-btn">Şube Ekle</button>
+                    </div>
+                    <div id="subeListesi" class="liste-konteyner"></div>
+                </div>
+
+                <div class="grid-container grid-container-3">
+                    <div class="kart black-border">
+                        <h4>BÖLÜM EKLE</h4>
+                        <div class="form-kart-icerik">
+                            <input type="text" id="yeniMarkaAdi" class="form-input" placeholder="Örn: A Blok, VIP">
+                            <button id="markaEkleBtn" class="ana-btn">Bölümü Kaydet</button>
+                            <div id="markaListesi" class="liste-konteyner"></div>
+                        </div>
+                    </div>
+
+                    <div class="kart black-border">
+                        <h4>YENİ PERSONEL KAYDI</h4>
+                        <div class="form-kart-icerik">
+                            <input type="text" id="p_kadi" class="form-input" placeholder="Kullanıcı Adı (Türkçe karakter olmadan)">
+                            <input type="email" id="p_email" class="form-input" placeholder="E-posta Adresi (İsteğe Bağlı)">
+                            <select id="p_rol" class="form-input">
+                                <option value="SOFOR">Şoför</option>
+                                <option value="VALE">Vale</option>
+                                <option value="DANISMAN">Danışman (Sekreter)</option>
+                                <option value="OPERASYON">Operasyon Görevlisi</option>
+                            </select>
+                            <select id="pMarka" class="form-input"><option value="Genel">Bölüm Seçin...</option></select>
+                            <select id="pSube" class="form-input gizli"></select>
+                            <div id="p_tel_container" class="telefon-konteyner">
+                                <input type="tel" id="p_tel" class="form-input telefon-input-mb0" placeholder="(5XX XXX XX XX)" maxlength="10">
+                                <small class="telefon-altyazi">Otomatik olarak +90 eklenecektir, sadece 10 hane yazın.</small>
+                            </div>
+                            <button id="personelEkleBtn" class="ana-btn">Personeli Kaydet</button>
+                        </div>
+                    </div>
+
+                    <div class="kart black-border" id="aracEkleKart">
+                        <h4>FİLOYA ARAÇ EKLE</h4>
+                        <div class="form-kart-icerik">
+                            <input type="text" id="v_plaka" class="form-input" placeholder="Araç Plakası (Örn: 34ABC123)">
+                            
+                            <select id="v_marka" class="form-input"><option value="Genel">Araç Bölümü...</option></select>
+                            <button id="aracEkleBtn" class="ana-btn">Aracı Filoya Ekle</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="grid-container grid-container-12-8">
+                    <div class="kart">
+                        <h4>MEVCUT PERSONELLER</h4>
+                        <div id="personelListesi" class="liste-konteyner"></div>
+                    </div>
+                    <div class="kart" id="filoDurumKart">
+                        <h4>FİLO DURUMU (ARAÇLAR)</h4>
+                        <div id="kotaBilgi" class="kota-bilgi gizli"></div>
+                        <div id="aracListesi" class="liste-konteyner"></div>
+                    </div>
+                </div>
+
+                <!-- Base location -->
+                <div class="kart firma-merkez-kart">
+                    <h4 id="konumBaslik">FİRMA MERKEZ KONUMU</h4>
+                    <p id="konumAciklama" class="firma-merkez-aciklama">Haritaya tıklayarak servis merkezinizin konumunu işaretleyin. Bu konum şoförün rotasını tamamlayıp geri döneceği noktadır.</p>
+                    <div id="konumUyari"></div>
+                    <button id="firmaKonumAyarlaBtn" class="ana-btn konum-secim-btn">Merkezi Haritadan Seç</button>
+                    <div id="konumOnayPanel">
+                        <span class="konum-onay-yazi">Merkez burası mı?</span>
+                        <button id="konumOnaylaBtn" class="konum-onayla-btn">Evet, Kaydet</button>
+                        <button id="konumIptalBtn" class="konum-iptal-btn">İptal</button>
+                    </div>
+                    <div id="merkez-map"></div>
+                </div>
+
+                <!-- Route and stop management -->
+                <div class="kart" id="durakYonetimAlani">
+                    <h4>GÜZERGAH VE DURAK YÖNETİMİ</h4>
+                    <p class="durak-yonetim-aciklama">Önce sol taraftan bir güzergah ekleyin. Ardından listeye tıklayarak güzergahı seçin ve sağdaki haritaya tıklayarak duraklarınızı belirleyin.</p>
+                    <div class="durak-yonetim-grid">
+                        <div class="durak-yonetim-sol">
+                            <div class="guzergah-ekle-row">
+                                <input type="text" id="yeniGuzergahAdi" class="form-input guzergah-ekle-input" placeholder="Hat Adı (Örn: Karşıyaka)">
+                                <button id="guzergahEkleBtn" class="ana-btn guzergah-ekle-btn">Ekle</button>
+                            </div>
+                            <div id="guzergahListesi"></div>
+                        </div>
+                        <div class="durak-yonetim-sag">
+                            <div id="aktifGuzergahBilgi"></div>
+                            <div id="durak-map"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="raporlar" class="sayfa-gorunumu">
+                <div class="header-area">
+                    <h1>Araç Bazlı Performans Raporları</h1>
+                    <div class="filtre-butonlari">
+                        <button class="filtre-btn active" data-aksiyon="rapor-getir" data-periyot="gunluk">Bugün</button>
+                        <button class="filtre-btn" data-aksiyon="rapor-getir" data-periyot="haftalik">Bu Hafta</button>
+                        <button class="filtre-btn" data-aksiyon="rapor-getir" data-periyot="aylik">Bu Ay</button>
+                    </div>
+                </div>
+                <!-- Single loading indicator: while loading, the block below is hidden and this line is
+                     shown instead, so all tables appear together when the data arrives. -->
+                <div id="raporYukleniyor" class="rapor-yukleniyor" style="display:none;">Rapor yükleniyor...</div>
+
+                <!-- Wrapper: loading visibility is controlled here only, never on the elements inside.
+                     Those are shown or hidden by the module flags (modulUIUygula), and toggling the
+                     wrapper leaves their settings intact. -->
+                <div id="raporIcerik">
+                    <div id="aracRaporTablosu" class="rapor-konteyner"></div>
+
+                    <h2 id="valeRaporBaslik" style="margin-top:20px; margin-bottom:10px; color:#c7f339; font-weight:600; font-size:1.2rem;">Vale Bazlı Performans Raporları</h2>
+                    <div id="valeRaporTablosu" class="rapor-konteyner"></div>
+
+                    <!-- Punctuality: promised vs actual time (gorev_etaplari) -->
+                    <h2 id="dakiklikBaslik" style="margin-top:30px; margin-bottom:4px; color:#c7f339; font-weight:600; font-size:1.2rem;">Dakiklik: Söz Verilen Saat vs Gerçekleşen</h2>
+                    <p id="dakiklikAciklama" class="dakiklik-aciklama">Vale yola çıkarken hesaplanan varış saati kaydedilir ve gerçekleşen varışla karşılaştırılır. Sapma eksi ise erken, artı ise geç varılmıştır.</p>
+                    <div id="dakiklikTablosu" class="rapor-konteyner"></div>
+                </div>
+            </div>
+
+            <!-- Satisfaction survey details. The per-valet rating also appears as a column in the
+                 punctuality table (measurement next to perception); this tab adds the per-question
+                 breakdown and the comments. -->
+            <div id="memnuniyet" class="sayfa-gorunumu">
+                <div class="header-area">
+                    <h1>Müşteri Memnuniyeti</h1>
+                    <div class="filtre-butonlari">
+                        <button class="filtre-btn" data-aksiyon="memnuniyet-getir" data-periyot="gunluk">Bugün</button>
+                        <button class="filtre-btn" data-aksiyon="memnuniyet-getir" data-periyot="haftalik">Bu Hafta</button>
+                        <button class="filtre-btn active" data-aksiyon="memnuniyet-getir" data-periyot="aylik">Bu Ay</button>
+                    </div>
+                </div>
+                <div id="memnuniyetYukleniyor" class="rapor-yukleniyor" style="display:none;">Rapor yükleniyor...</div>
+                <div id="memnuniyetIcerik"></div>
+            </div>
+
+        </div>
+    </div>
+
+    <div id="davetModal" class="modal-overlay">
+        <div class="modal-kutu">
+            <div class="davet-modal-ikon"><svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg></div>
+            <h3>Personel Eklendi!</h3>
+            <p class="davet-modal-aciklama">Aşağıdaki davet linkini personel ile paylaşın:</p>
+
+            <div id="modalLink" class="link-kutu">http://...</div>
+
+            <div class="modal-btn-grup">
+                <button id="linkKopyalaBtn" class="m-btn m-kopya"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>Linki Kopyala</button>
+                <button id="btnWp" class="m-btn m-wp"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path></svg>WhatsApp'tan Gönder</button>
+                <button id="btnMail" class="m-btn m-mail"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path><polyline points="22,6 12,13 2,6"></polyline></svg>E-posta ile Gönder</button>
+                <button id="davetModalKapatBtn" class="m-btn m-kapat">Kapat</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://api.mapbox.com/mapbox-gl-js/v3.3.0/mapbox-gl.js"></script>
+    <script src="config.js"></script>
+    <script src="js/admin.js"></script>
+    <!-- The staff panels have no service worker, so an open tab does not pick up a deploy by
+         itself. This script watches CACHE_VERSION in sw.js and shows a "new version" banner. -->
+    <script src="js/surum-kontrol.js"></script>
+</body>
+</html>

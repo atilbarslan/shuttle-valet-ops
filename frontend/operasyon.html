@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- Content Security Policy: replace YOUR_DOMAIN with the domain the app is served from
+         (for example app.example.com) so the page may call the API (https://) and the live
+         WebSocket (wss://). The localhost entries are only for local development. -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' http://127.0.0.1:8000 ws://127.0.0.1:8000 http://localhost:8000 ws://localhost:8000 https://YOUR_DOMAIN wss://YOUR_DOMAIN; img-src 'self' data:;">
+    <title>Shuttle &amp; Valet Ops | Operasyon Merkezi</title>
+    <style>
+        @font-face {
+            font-family: 'Inter';
+            src: url('fonts/InterVariable.woff2') format('woff2');
+            font-weight: 100 900;
+            font-style: normal;
+            font-display: swap;
+        }
+        :root {
+            --bg-color: #0d0d12;
+            --surface: rgba(25, 25, 32, 0.6);
+            --surface-2: rgba(0, 0, 0, 0.2);
+            --border: rgba(255, 255, 255, 0.08);
+            --text: #ffffff;
+            --text-2: #8a8f98;
+            --blue: #3b82f6;
+            --green: #10b981;
+            --orange: #f59e0b;
+            --red: #ef4444;
+            --volt: #DFFF00;
+            --radius-lg: 16px;
+            --radius-md: 12px;
+            --transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            --bg: #0d0d12;
+        }
+        * { box-sizing: border-box; }
+        body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; background-color: var(--bg-color); background-image: radial-gradient(circle at 50% 0%, rgba(223,255,0,0.03), transparent 50%); margin: 0; padding: 20px; color: var(--text); min-height: 100vh; }
+
+        .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); padding-bottom: 15px; margin-bottom: 25px; }
+        .header-sol { display: flex; align-items: center; gap: 12px; }
+        .header-sol svg { width: 40px; height: 40px; }
+        .header-sol h1 { margin: 0; font-size: 22px; letter-spacing: -0.5px; }
+        .header-sol h1 span { color: var(--volt); text-shadow: 0 0 10px rgba(223,255,0,0.3); }
+        .header-sag { display: flex; align-items: center; gap: 10px; }
+        .firma-adi { color: var(--text-2); font-size: 13px; font-weight: 600; }
+        .cikis-btn { background: rgba(255,255,255,0.05); color: var(--text); border: 1px solid var(--border); padding: 10px 18px; border-radius: var(--radius-md); font-weight: 600; cursor: pointer; font-size: 13px; transition: var(--transition); }
+        .cikis-btn:hover { background: rgba(239,68,68,0.1); color: var(--red); border-color: rgba(239,68,68,0.3); }
+
+        /* Summary bar */
+        .ozet-cubuk { display: flex; gap: 15px; margin-bottom: 25px; flex-wrap: wrap; }
+        .ozet-kart { background: var(--surface); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 20px; flex: 1; min-width: 120px; box-shadow: 0 8px 32px rgba(0,0,0,0.4); text-align: center; }
+        .ozet-kart .sayi { font-size: 36px; font-weight: 900; letter-spacing: -1px; }
+        .ozet-kart .etiket { font-size: 11px; color: var(--text-2); text-transform: uppercase; letter-spacing: 1px; margin-top: 4px; }
+        .sayi-gorevde { color: var(--red); text-shadow: 0 0 15px rgba(239,68,68,0.3); }
+        .sayi-beklemede { color: var(--green); text-shadow: 0 0 15px rgba(16,185,129,0.3); }
+        .sayi-yolcu { color: var(--orange); text-shadow: 0 0 15px rgba(245,158,11,0.3); }
+
+        /* Vehicle cards */
+        .arac-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 20px; }
+        .arac-kart { background: var(--surface); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: 0 8px 32px rgba(0,0,0,0.4); overflow: hidden; }
+
+        /* Status colours and card borders */
+        .arac-kart.gorevde { border-left: 4px solid var(--red); }
+        .arac-kart.donuyor { border-left: 4px solid var(--blue); }
+        .arac-kart.merkezde { border-left: 4px solid var(--green); }
+        .arac-kart.disarida { border-left: 4px solid var(--orange); }
+
+        .arac-kart-header { padding: 15px 18px; display: flex; justify-content: space-between; align-items: center; background: rgba(0,0,0,0.2); border-bottom: 1px solid var(--border); }
+        .arac-kart-header h3 { margin: 0; font-size: 18px; display: flex; align-items: center; gap: 8px; color: var(--text); }
+        .sofor-bilgi { font-size: 12px; color: var(--text-2); margin-top: 3px; }
+
+        .durum-badge { font-size: 12px; font-weight: 700; padding: 5px 12px; border-radius: 20px; }
+        .badge-gorevde { background: rgba(239,68,68,0.15); color: #f87171; border: 1px solid rgba(239,68,68,0.3); }
+        .badge-donuyor { background: rgba(59,130,246,0.15); color: #60a5fa; border: 1px solid rgba(59,130,246,0.3); }
+        .badge-merkezde { background: rgba(16,185,129,0.15); color: #34d399; border: 1px solid rgba(16,185,129,0.3); }
+        .badge-disarida { background: rgba(245,158,11,0.15); color: #fbbf24; border: 1px solid rgba(245,158,11,0.3); }
+
+        /* Passenger list */
+        .yolcu-liste { padding: 8px 10px; max-height: 220px; overflow-y: auto; }
+        .yolcu-satir { display: flex; justify-content: space-between; align-items: center; padding: 9px 8px; border-bottom: 1px solid rgba(255,255,255,0.05); }
+        .yolcu-satir:last-child { border-bottom: none; }
+        .yolcu-bilgi { font-size: 14px; font-weight: 600; display: flex; align-items: center; color: var(--text); }
+        /* align-items: center is needed; the default 'stretch' makes the badges as tall as the row */
+        .yolcu-alt { font-size: 11px; color: var(--text-2); display: flex; gap: 8px; margin-top: 2px; align-items: center; flex-wrap: wrap; }
+        .yolcu-alt > span:first-child { white-space: nowrap; }
+        /* Customer plate badge: fixed height, centred in the row */
+        .plaka-rozet { background: var(--orange); color: #000; font-weight: 700; padding: 2px 7px; border-radius: 4px;
+                       line-height: 1.6; white-space: nowrap; display: inline-block; letter-spacing: 0.3px; }
+        .yolcu-durum { font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 8px; }
+        .d-bekliyor { background: rgba(245,158,11,0.15); color: #fbbf24; }
+        .d-alindi { background: rgba(16,185,129,0.15); color: #34d399; }
+        .d-hazir { background: rgba(59,130,246,0.15); color: #60a5fa; }
+        .devret-btn { background: rgba(59,130,246,0.1); color: #60a5fa; border: 1px solid rgba(59,130,246,0.3); padding: 5px 10px; border-radius: 6px; font-size: 12px; font-weight: bold; cursor: pointer; white-space: nowrap; transition: var(--transition); }
+        .devret-btn:hover { background: var(--blue); color: white; border-color: var(--blue); }
+
+        .bos-mesaj { padding: 20px; text-align: center; color: var(--text-2); font-size: 13px; }
+
+        /* Card footer */
+        .kart-footer { padding: 10px 15px; background: rgba(0,0,0,0.2); border-top: 1px solid var(--border); display: flex; justify-content: flex-end; }
+        .acil-btn { background: rgba(239,68,68,0.1); color: #f87171; border: 1px solid rgba(239,68,68,0.3); padding: 7px 12px; border-radius: 6px; font-size: 12px; font-weight: bold; cursor: pointer; transition: var(--transition); }
+        .acil-btn:hover { background: var(--red); color: white; }
+
+        /* Dialog */
+        .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 2000; justify-content: center; align-items: center; }
+        .modal-kutu { background: #16161c; border: 1px solid var(--border); padding: 28px; border-radius: var(--radius-lg); width: 90%; max-width: 360px; box-shadow: 0 20px 50px rgba(0,0,0,0.6); }
+        .modal-kutu h3 { margin: 0 0 10px; font-size: 18px; color: var(--text); }
+        .modal-kutu p { color: var(--text-2); font-size: 14px; margin-bottom: 20px; }
+        .modal-select { width: 100%; padding: 12px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 15px; font-size: 14px; color: var(--text); }
+        .modal-btn { width: 100%; padding: 13px; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; font-size: 14px; margin-bottom: 10px; }
+        .onayla-btn { background: var(--blue); color: white; }
+        .iptal-btn { background: rgba(255,255,255,0.08); color: var(--text); }
+
+        /* Styles moved out of inline style attributes into classes */
+
+        /* Loading message inside the vehicle grid */
+        .araclar-yukleniyor { color: var(--text-2); font-size: 14px; padding: 20px; }
+        /* Loading state for the summary counters. Static files are revalidated on every load
+           (no-cache), so the first paint takes about a second; a plain "-" in that time read
+           as "no data", so the counters pulse instead. */
+        .sayi-yukleniyor { opacity: .35; animation: sayiNabiz 1.2s ease-in-out infinite; }
+        @keyframes sayiNabiz { 0%, 100% { opacity: .2; } 50% { opacity: .5; } }
+
+        /* Completed tasks card */
+        .tamamlananlar-kart { margin-top: 30px; background: var(--surface); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: 0 8px 32px rgba(0,0,0,0.4); overflow: hidden; border-top: 3px solid var(--green); }
+        .tamamlananlar-header { padding: 15px 18px; background: rgba(0,0,0,0.2); border-bottom: 1px solid var(--border); }
+        .tamamlananlar-baslik { margin: 0; font-size: 16px; color: var(--green); display: flex; align-items: center; gap: 8px; }
+        .tamamlananlar-liste { padding: 10px; max-height: 300px; overflow-y: auto; }
+
+        /* === Vehicle card (built by the JS) === */
+        .arac-kart-header-flex { flex-wrap: wrap; gap: 10px; }
+        .arac-kart-baslik { flex: 1; min-width: 150px; }
+        .arac-plaka-baslik { display: flex; align-items: center; gap: 8px; }
+        .arac-kart-sag { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+
+        /* Departure time controls */
+        .saat-aksiyon-grup { display: flex; align-items: center; gap: 6px; }
+        .saat-input-kutu { display: flex; align-items: center; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; background: var(--surface-2); }
+        .saat-input { padding: 4px 6px; border: none; outline: none; font-size: 12px; width: 70px; background: transparent; color: var(--text); }
+        .saat-input::-webkit-calendar-picker-indicator { filter: invert(1); cursor: pointer; }
+        .saat-kaydet-btn { background: var(--blue); color: white; border: none; padding: 5px 10px; font-size: 11px; font-weight: bold; cursor: pointer; }
+        .sablon-yonet-btn { background: rgba(255,255,255,0.08); color: var(--text); border: 1px solid var(--border); padding: 6px 8px; font-size: 12px; border-radius: 6px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+
+        /* Inside a passenger row */
+        .yolcu-tel-link { color: var(--blue); text-decoration: none; margin-left: 5px; }
+        .yolcu-sag-grup { display: flex; align-items: center; gap: 8px; }
+        .durak-rozet { background: rgba(255,255,255,0.08); padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: bold; color: var(--text-2); margin-left: 5px; }
+
+        /* Route badge */
+        .hat-bilgisi { font-size: 11px; font-weight: bold; background: rgba(59,130,246,0.1); color: #60a5fa; border: 1px solid rgba(59,130,246,0.3); display: inline-block; padding: 4px 8px; border-radius: 6px; margin-top: 8px; }
+
+        /* Completed row (built by the JS) */
+        .tamamlanan-satir { display: flex; justify-content: space-between; align-items: center; background: rgba(0,0,0,0.2); border-radius: 8px; margin-bottom: 8px; padding: 12px; opacity: 0.75; border: 1px solid var(--border); }
+        /* Completed tasks grouped by valet, with a count per valet */
+        .vale-tamamlanan-grup { border: 1px solid var(--border); border-left: 3px solid #c7f339; border-radius: 10px; padding: 12px; margin-bottom: 14px; background: rgba(0,0,0,0.15); }
+        .vale-grup-basligi { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+        .vale-grup-ad { font-weight: 700; font-size: 14px; }
+        .vale-grup-sayi { font-size: 12px; color: #c7f339; font-weight: 600; }
+        .tamamlanan-bilgi-kutu { flex: 1; }
+        .tamamlanan-ad { color: var(--text-2); text-decoration: line-through; font-size: 14px; font-weight: 600; }
+        .tamamlanan-arac-bilgi { margin-left: 5px; }
+        .tamamlanan-arac { color: var(--text); }
+        .tamamlanan-rozet { font-size: 12px; padding: 6px 12px; font-weight: bold; border-radius: 8px; }
+        .tamamlanan-basarili { background: rgba(16,185,129,0.15); color: #34d399; }
+        .tamamlanan-basarisiz { background: rgba(239,68,68,0.15); color: #f87171; }
+        .tamamlanan-iptal { background: rgba(148,163,184,0.16); color: #94a3b8; }
+        /* Times, always in Istanbul time (saatTR in the JS) */
+        .tamamlanan-zaman { font-size: 11px; color: var(--text-2); margin-top: 4px; font-variant-numeric: tabular-nums; }
+        .kayit-zaman { font-size: 11px; color: var(--text-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
+        /* Active valet task carried over from an earlier day, marked so it is not mistaken for today's */
+        .devreden-rozet { font-size: 10px; font-weight: 700; color: #fbbf24; background: rgba(251,191,36,0.12); padding: 2px 6px; border-radius: 4px; margin-left: 6px; letter-spacing: .3px; }
+        /* KVKK: the customer refused or withdrew location consent; staff continue by phone */
+        /* Task milestone timeline: promised vs actual time */
+        .etap-cizelge { margin-top: 8px; padding-left: 10px; border-left: 2px solid rgba(255,255,255,0.12); }
+        .etap-satir { font-size: 11px; color: var(--text-2, #8a8f98); line-height: 1.7; }
+        .etap-satir b { color: var(--text, #fff); font-weight: 600; }
+        .etap-sapma { font-weight: 700; padding: 1px 6px; border-radius: 4px; margin-left: 4px; }
+        .etap-gec { color: #f87171; background: rgba(239,68,68,0.12); }
+        .etap-erken { color: #60a5fa; background: rgba(59,130,246,0.12); }
+        .etap-zamaninda { color: #34d399; background: rgba(16,185,129,0.12); }
+        /* Where-was-it-pressed notice: reports a measurement, does not accuse (operations panel only) */
+        .etap-konum-uyari { color: #fbbf24; background: rgba(245,158,11,0.12); border: 1px solid rgba(245,158,11,0.3);
+                            font-weight: 600; padding: 1px 7px; border-radius: 4px; margin-left: 6px; cursor: help; }
+        .etap-suruyor { color: #fbbf24; font-weight: 600; }
+        .etap-iptal { color: #f87171; font-style: italic; }
+        .riza-rozet { font-size: 10px; font-weight: 700; color: #f87171; background: rgba(239,68,68,0.12); border: 1px solid rgba(239,68,68,0.3); padding: 1px 6px; border-radius: 4px; margin-left: 6px; letter-spacing: .3px; cursor: help; }
+        .gorev-iptal-btn { background: rgba(239,68,68,0.10); color: #f87171; border: 1px solid rgba(239,68,68,0.35); padding: 5px 10px; border-radius: 6px; font-size: 11px; font-weight: 600; cursor: pointer; }
+        .gorev-iptal-btn:hover { background: rgba(239,68,68,0.18); }
+
+        /* === Departure time template dialog (built with createElement) === */
+        .sablon-modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); display: flex; justify-content: center; align-items: center; z-index: 9999; }
+        .sablon-modal-kutu { background: #16161c; border: 1px solid var(--border); width: 320px; border-radius: var(--radius-md); overflow: hidden; box-shadow: 0 20px 50px rgba(0,0,0,0.6); }
+        .sablon-modal-header { background: rgba(0,0,0,0.2); padding: 15px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+        .sablon-modal-baslik { margin: 0; font-size: 16px; color: var(--text); }
+        .sablon-modal-kapat-btn { background: none; border: none; font-size: 20px; cursor: pointer; color: var(--text-2); }
+        .sablon-modal-liste { max-height: 250px; overflow-y: auto; padding: 10px; }
+        .sablon-modal-footer { padding: 15px; background: rgba(0,0,0,0.2); border-top: 1px solid var(--border); display: flex; gap: 10px; }
+        .sablon-saat-input { flex: 1; padding: 8px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; outline: none; color: var(--text); }
+        .sablon-ekle-btn { background: var(--green); color: white; border: none; padding: 8px 15px; border-radius: 6px; cursor: pointer; font-weight: bold; }
+        .sablon-satir { display: flex; justify-content: space-between; align-items: center; padding: 10px; border-bottom: 1px solid var(--border); }
+        .sablon-saat { font-size: 16px; font-weight: bold; color: var(--blue); }
+        .sablon-sil-btn { background: var(--red); color: white; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer; }
+        .sablon-bos-mesaj { padding: 15px; text-align: center; color: var(--text-2); }
+
+        @media (max-width: 600px) {
+            body { padding: 12px; }
+            .arac-grid { grid-template-columns: 1fr; }
+            .ozet-cubuk { gap: 10px; }
+            .arac-kart-header-flex { flex-direction: column; align-items: flex-start; }
+            .arac-kart-sag { align-items: flex-start; width: 100%; }
+            .yolcu-satir { flex-direction: column; align-items: flex-start; gap: 8px; }
+            .yolcu-sag-grup { align-self: flex-end; }
+        }
+    </style>
+    <!-- DOMPurify v3, served locally -->
+    <script src="/libs/purify.min.js"></script>
+</head>
+<body>
+
+    <div class="header">
+        <div class="header-sol">
+            <svg viewBox="0 0 80 80" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <rect width="80" height="80" rx="14" fill="#0A0A0A"/>
+                <path d="M22 18 L22 62" stroke="#FFFFFF" stroke-width="7" stroke-linecap="round"/>
+                <path d="M22 18 Q50 18 50 32 Q50 46 22 46" stroke="#FFFFFF" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+                <path d="M50 32 L64 32" stroke="#DFFF00" stroke-width="4" stroke-linecap="round"/>
+                <circle cx="64" cy="32" r="5" fill="#DFFF00"/>
+            </svg>
+            <div>
+                <h1>PAX<span>ROUTE</span></h1>
+                <div id="firmaAdiBaslik" class="firma-adi">Operasyon Merkezi</div>
+            </div>
+        </div>
+        <div class="header-sag">
+            <button id="cikisBtn" class="cikis-btn">Çıkış</button>
+        </div>
+    </div>
+
+    <!-- Summary bar -->
+    <div class="ozet-cubuk">
+        <div class="ozet-kart">
+            <div id="ozGorevde" class="sayi sayi-gorevde sayi-yukleniyor">·</div>
+            <div class="etiket">Görevde & Dönenler</div>
+        </div>
+        <div class="ozet-kart">
+            <div id="ozBeklemede" class="sayi sayi-beklemede sayi-yukleniyor">·</div>
+            <div class="etiket">Merkezde & Dışarıda</div>
+        </div>
+        <div class="ozet-kart">
+            <div id="ozYolcu" class="sayi sayi-yolcu sayi-yukleniyor">·</div>
+            <div class="etiket" id="ozYolcuEtiket">Aktif Yolcu</div>
+        </div>
+    </div>
+
+    <!-- Vehicle cards -->
+    <h2 id="servisAracBaslik" style="margin-top:20px; margin-bottom:15px; color:#fff; font-size:1.2rem;">Aktif Servis Araçları</h2>
+    <div class="arac-grid" id="aracGrid">
+        <div class="araclar-yukleniyor">Araçlar yükleniyor...</div>
+    </div>
+
+    <h2 id="valeBaslik" style="margin-top:30px; margin-bottom:15px; color:#c7f339; font-size:1.2rem;">Aktif Valeler</h2>
+    <div class="arac-grid" id="valeGrid">
+        <div class="araclar-yukleniyor">Yükleniyor...</div>
+    </div>
+
+    <!-- Completed tasks card -->
+    <div class="tamamlananlar-kart">
+        <div class="tamamlananlar-header">
+            <h3 class="tamamlananlar-baslik"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>Tamamlanan Görevler (Bugün)</h3>
+        </div>
+        <div id="tamamlananListesi" class="tamamlananlar-liste">
+            <div class="bos-mesaj">Henüz tamamlanan görev yok.</div>
+        </div>
+    </div>
+
+    <!-- Transfer dialog -->
+    <div id="devretModal" class="modal-overlay">
+        <div class="modal-kutu">
+            <h3>Yolcu Devret</h3>
+            <p><b id="devretYolcuAdi"></b> isimli yolcuyu hangi araca aktarmak istiyorsunuz?</p>
+            <select id="yeniAracSec" class="modal-select"></select>
+            <input type="hidden" id="devretToken">
+            <button id="aktarimOnaylaBtn" class="modal-btn onayla-btn">Onayla ve Aktar</button>
+            <button id="modalIptalBtn" class="modal-btn iptal-btn">İptal</button>
+        </div>
+    </div>
+
+    <script src="config.js"></script>
+    <script src="js/operasyon.js"></script>
+    <!-- The staff panels have no service worker, so an open tab does not pick up a deploy by
+         itself. This script watches CACHE_VERSION in sw.js and shows a "new version" banner. -->
+    <script src="js/surum-kontrol.js"></script>
+</body>
+</html>

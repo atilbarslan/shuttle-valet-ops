@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shuttle &amp; Valet Ops | Sistem Girişi</title>
+    <!-- Content Security Policy: replace YOUR_DOMAIN with the domain the app is served from
+         (for example app.example.com) so the page may call the API. The localhost entries
+         are only for local development. -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' http://127.0.0.1:8000 http://localhost:8000 https://YOUR_DOMAIN; img-src 'self' data:;">
+    <style>
+        @font-face {
+            font-family: 'Inter';
+            src: url('fonts/InterVariable.woff2') format('woff2');
+            font-weight: 100 900;
+            font-style: normal;
+            font-display: swap;
+        }
+        :root {
+            --bg-color: #0d0d12;
+            --surface-color: rgba(25, 25, 32, 0.6);
+            --surface-border: rgba(255, 255, 255, 0.08);
+            --text-primary: #ffffff;
+            --text-secondary: #8a8f98;
+            --accent-volt: #DFFF00;
+            --accent-volt-hover: #e8ff4d;
+            --accent-red: #ef4444;
+            --radius-lg: 24px;
+            --radius-md: 12px;
+            --transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background-color: var(--bg-color);
+            background-image:
+                radial-gradient(circle at 15% 50%, rgba(223, 255, 0, 0.04), transparent 35%),
+                radial-gradient(circle at 85% 30%, rgba(59, 130, 246, 0.03), transparent 35%);
+            color: var(--text-primary);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            overflow-x: hidden;
+        }
+
+        /* Session message */
+        #oturum-mesaji {
+            display: none;
+            width: 100%;
+            max-width: 360px;
+            margin-bottom: 25px;
+            padding: 16px 20px;
+            background: rgba(245, 158, 11, 0.1);
+            border-left: 4px solid #f59e0b;
+            border-radius: var(--radius-md);
+            color: #fcd34d;
+            font-size: 13px;
+            line-height: 1.5;
+            backdrop-filter: blur(10px);
+        }
+
+        #oturum-mesaji strong { color: #f59e0b; }
+
+        /* Login container, frosted glass */
+        .login-box {
+            background: var(--surface-color);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid var(--surface-border);
+            border-radius: var(--radius-lg);
+            padding: 50px 40px;
+            width: 100%;
+            max-width: 380px;
+            box-shadow: 0 20px 50px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.05);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .login-box::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0; height: 3px;
+            background: linear-gradient(90deg, transparent, var(--accent-volt), transparent);
+            opacity: 0.8;
+        }
+
+        .logo-wrap {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin-bottom: 40px;
+        }
+
+        .logo-svg {
+            width: 60px;
+            height: 60px;
+            margin-bottom: 16px;
+            filter: drop-shadow(0 0 15px rgba(223, 255, 0, 0.15));
+        }
+
+        .logo {
+            font-size: 28px;
+            font-weight: 800;
+            letter-spacing: -1px;
+            text-align: center;
+            margin-bottom: 6px;
+        }
+
+        .logo-volt {
+            color: var(--accent-volt);
+            text-shadow: 0 0 10px rgba(223, 255, 0, 0.3);
+        }
+
+        .motto {
+            font-size: 11px;
+            color: var(--text-secondary);
+            text-align: center;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            font-weight: 600;
+        }
+
+        /* Forms */
+        .form-group { margin-bottom: 20px; }
+
+        label {
+            display: block;
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-bottom: 8px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        input {
+            width: 100%;
+            padding: 16px;
+            border: 1px solid var(--surface-border);
+            border-radius: var(--radius-md);
+            background: rgba(0, 0, 0, 0.3);
+            color: var(--text-primary);
+            font-size: 15px;
+            font-family: inherit;
+            box-sizing: border-box;
+            outline: none;
+            transition: var(--transition);
+        }
+
+        input:focus {
+            border-color: var(--accent-volt);
+            background: rgba(0,0,0,0.5);
+            box-shadow: 0 0 0 3px rgba(223, 255, 0, 0.1);
+        }
+
+        input::placeholder { color: rgba(255,255,255,0.2); }
+
+        .btn {
+            width: 100%;
+            padding: 16px;
+            border: none;
+            border-radius: var(--radius-md);
+            margin-top: 15px;
+            font-size: 15px;
+            font-weight: 700;
+            cursor: pointer;
+            color: #000;
+            background: var(--accent-volt);
+            transition: var(--transition);
+            box-shadow: 0 4px 15px rgba(223, 255, 0, 0.2);
+        }
+
+        .btn:hover {
+            background: var(--accent-volt-hover);
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(223, 255, 0, 0.3);
+        }
+
+        .btn:active { transform: translateY(0); }
+
+        .btn:disabled {
+            background: rgba(255,255,255,0.1);
+            color: var(--text-secondary);
+            cursor: not-allowed;
+            box-shadow: none;
+            transform: none;
+        }
+
+        #hataMesaji {
+            color: var(--accent-red);
+            font-size: 13px;
+            margin-top: 20px;
+            text-align: center;
+            display: none;
+            font-weight: 500;
+            background: rgba(239, 68, 68, 0.1);
+            padding: 10px;
+            border-radius: 8px;
+        }
+
+        @media (max-width: 480px) {
+            body { padding: 20px; }
+            .login-box { padding: 40px 25px; }
+            .logo { font-size: 26px; }
+        }
+    </style>
+</head>
+<body>
+
+    <div id="oturum-mesaji">
+        ⏰ <strong>Oturumunuz sona erdi.</strong><br>
+        Güvenliğiniz için lütfen tekrar giriş yapın.
+    </div>
+
+    <div class="login-box">
+        <div class="logo-wrap">
+            <svg class="logo-svg" viewBox="0 0 80 80" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <rect width="80" height="80" rx="16" fill="#0A0A0A" stroke="rgba(255,255,255,0.1)"/>
+                <path d="M22 18 L22 62" stroke="#FFFFFF" stroke-width="6" stroke-linecap="round"/>
+                <path d="M22 18 Q50 18 50 32 Q50 46 22 46" stroke="#FFFFFF" stroke-width="6" stroke-linecap="round" fill="none"/>
+                <path d="M46 32 L64 32" stroke="#DFFF00" stroke-width="4" stroke-linecap="round"/>
+                <circle cx="64" cy="32" r="4" fill="#DFFF00" style="filter: drop-shadow(0 0 8px rgba(223, 255, 0, 0.6))"/>
+            </svg>
+            <div class="logo">PAX<span class="logo-volt">ROUTE</span></div>
+            <div class="motto">Sistem Giriş Portalı</div>
+        </div>
+
+        <div class="form-group">
+            <label>Kullanıcı Adı</label>
+            <input type="text" id="kullaniciAdi" placeholder="Kullanıcı adınız..." autocomplete="off">
+        </div>
+
+        <div class="form-group">
+            <label>Şifre</label>
+            <input type="password" id="sifre" placeholder="••••••••">
+        </div>
+
+        <button id="girisBtn" class="btn">Sisteme Gir</button>
+
+        <div id="hataMesaji">Hatalı bilgi girdiniz.</div>
+    </div>
+
+    <script src="config.js"></script>
+    <script src="js/login.js"></script>
+</body>
+</html>
