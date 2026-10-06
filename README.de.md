@@ -61,11 +61,12 @@ die die Arbeit weiterlaufen lässt, wenn im Feld die Verbindung abreißt, und de
 10. [Konsistenz: Idempotenz statt Atomarität](#konsistenz-idempotenz-statt-atomarität)
 11. [Performance: weniger Redis-Verkehr](#performance-weniger-redis-verkehr)
 12. [Sicherheit](#sicherheit)
-13. [KVKK: Datenhygiene von Anfang an](#kvkk-datenhygiene-von-anfang-an)
-14. [Was es nicht tut](#was-es-nicht-tut)
-15. [Bekannte Grenzen](#bekannte-grenzen)
-16. [Einrichtung](#einrichtung)
-17. [Lizenz](#lizenz)
+13. [Fehlerbehandlung: was bei Ausfall durchlässt und was sperrt](#fehlerbehandlung-was-bei-ausfall-durchlässt-und-was-sperrt)
+14. [KVKK: Datenhygiene von Anfang an](#kvkk-datenhygiene-von-anfang-an)
+15. [Was es nicht tut](#was-es-nicht-tut)
+16. [Bekannte Grenzen](#bekannte-grenzen)
+17. [Einrichtung](#einrichtung)
+18. [Lizenz](#lizenz)
 
 ---
 
@@ -599,6 +600,46 @@ sie auf den Bildschirm geschrieben werden, und E-Mail-Inhalte werden HTML-escape
 
 Die Endpunkte für Anmeldung und Passwortvergabe sind durch Anfragelimits pro Minute geschützt;
 ebenso die wichtigsten Endpunkte der Kundenseite. Die Tokens in Kundenlinks sind 128-Bit-Zufallswerte.
+
+---
+
+## Fehlerbehandlung: was bei Ausfall durchlässt und was sperrt
+
+Wenn Redis oder die Datenbank nicht erreichbar sind, lassen manche Prüfungen die Anfrage durch
+(fail open) und manche stoppen sie (fail closed). Die Wahl hängt davon ab, was in welche Richtung
+verloren geht.
+
+| Prüfung | Wenn ihre Daten nicht lesbar sind | Grund |
+|---|---|---|
+| Durch Abmeldung widerrufenes Token | Durchlassen: das Token wird akzeptiert | Ein Ausfall darf nicht alle Mitarbeitenden im Feld aussperren |
+| Sperrzeitpunkt nach Passwort-Reset oder Löschung | Durchlassen: das Token wird akzeptiert | Ebenso |
+| Sperrzeitpunkt, der sich nicht auslesen lässt | Durchlassen: das Token wird akzeptiert | Ebenso |
+| Abmeldung | Durchlassen: antwortet „abgemeldet“, auch wenn der Widerruf nicht gespeichert werden konnte | Die App verwirft das Token ohnehin |
+| Unternehmen aktiv oder inaktiv | Redis ausgefallen: die Datenbank wird gelesen. Auch die Datenbank ausgefallen: die Anfrage endet mit einem Fehler. Ein nicht mehr existierendes Unternehmen gilt als inaktiv | Ein Ausfall ist kein Grund, ein nicht zahlendes Unternehmen zu bedienen |
+| Lebensdauer eines Kundenlinks mit unlesbarem Datum | Durchlassen: der Link funktioniert | Ein falsches Datum darf den Kunden nicht von seinem eigenen Auftrag aussperren |
+| Einwilligungsnachweis vor dem Speichern eines Standorts | Sperren: es wird kein Standort gespeichert | Der Verantwortliche muss die Einwilligung nachweisen können |
+| Ob ein Unternehmen eine Einwilligung verlangt | Sperren: die Einwilligung wird abgefragt | Die sichere Voreinstellung ist, zu fragen |
+| Einladungslink mit unlesbarem Datum | Sperren: der Link wird abgelehnt | Eine neue Einladung kostet wenig |
+| Ablehnung und Widerruf der Einwilligung | Durchlassen: Ablehnung oder Löschung finden statt | Ein Protokollfehler darf das Recht des Kunden nicht blockieren |
+| Audit-Log, Pünktlichkeits-Etappen | Durchlassen: die Aktion findet statt | Aufzeichnungen, keine Schranken |
+
+**Warum die Token-Prüfungen durchlassen.** Ausgesperrt würden Fahrer und Valets mitten in einem
+Auftrag; ein Infrastrukturausfall würde den Betrieb aller Unternehmen gleichzeitig stoppen. Das
+Risiko ist begrenzt: Jedes Token ist signiert und läuft ab (24 Stunden für Büro-Rollen, 7 Tage für
+Feld-Rollen), Rollen- und Unternehmensprüfungen hängen nicht von diesen Speichern ab, und die Lücke
+besteht nur, solange die Datenbank nicht erreichbar ist und Redis keine zwischengespeicherte Antwort
+für dieses Token hat. Das Risiko ist, dass ein abgemeldetes oder gestohlenes Token in dieser Zeit
+weiter funktioniert.
+
+**Warum die Einwilligung sperrt.** Nach dem KVKK liegt die Beweislast beim Verantwortlichen. Ein
+ohne Einwilligungsnachweis gespeicherter Standort gilt als Verarbeitung ohne Einwilligung; der
+schlimmste zulässige Ausgang ist daher „Einwilligung erfasst, kein Standort“, nie umgekehrt.
+
+**In einem Bereich wie dem Bankwesen** würden die Token-Prüfungen sperren: Ein unbekannter
+Widerrufsstatus hieße „ablehnen“, Tokens lebten Minuten statt Tage und würden über Refresh-Tokens
+erneuert, der Widerruf läge in einem hochverfügbaren Speicher mit Alarmierung, und die Abmeldung
+würde einen Fehler melden, statt Erfolg zu behaupten. Nutzer während eines Ausfalls auszusperren
+ist dort ein akzeptierter Preis, weil eine missbrauchte Sitzung Geld bewegt.
 
 ---
 
