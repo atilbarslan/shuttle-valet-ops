@@ -125,3 +125,10 @@ Standortfreigabe widerrufen hat.
   30 Sekunden akzeptiert werden; und jeder Worker würde die Anfragelimits für sich zählen, sodass das
   tatsächliche Limit mit der Zahl der Worker wüchse. Die richtige Lösung ist Redis Pub/Sub für
   Nachrichten und Cache-Invalidierung sowie Redis als Speicher für das Anfragelimit.
+- **Die Mandantentrennung wird in jedem Endpunkt einzeln geprüft.** Die Begründung steht unter
+  [Sicherheit und Datenschutz](SECURITY-PRIVACY.de.md#mandantentrennung): Jede Art von Ressource ist
+  auf andere Weise an ihre Firma gebunden. Der Preis ist, dass die Prüfung in einem Endpunkt
+  vergessen werden kann, und genau das hat das Audit gefunden. Robuster wäre eine gemeinsame
+  FastAPI-Abhängigkeit, die die Firma der angefragten Ressource ermittelt und eine Abweichung ablehnt,
+  bevor der Endpunkt läuft, oder Row-Level-Security-Richtlinien in Postgres (wofür das Backend sich
+  auch nicht mehr mit dem Schlüssel verbinden dürfte, der sie umgeht).

@@ -113,3 +113,10 @@ location permission.
   still be accepted for up to 30 seconds from another worker's cache; and each worker would count
   rate limits on its own, so the effective limit would grow with the number of workers. The proper
   fix is Redis Pub/Sub for broadcasts and cache invalidation, and Redis as the limiter's storage.
+- **Company isolation is checked in each endpoint separately.** The reason is in
+  [Security and privacy](SECURITY-PRIVACY.md#company-isolation): each kind of resource is tied to
+  its company in a different way. The price is that the check can be forgotten in one endpoint, and
+  the audit found exactly that. A sturdier approach would be a shared FastAPI dependency that
+  resolves the company of the requested resource and rejects a mismatch before the endpoint runs,
+  or Postgres row level security policies (which would also mean the backend no longer connects with
+  the key that bypasses them).
