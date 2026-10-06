@@ -545,7 +545,7 @@ async def riza_kaydi_yaz(
     under a consent that was never recorded is the same as processing it without consent.
     Callers therefore record consent before they store the location. The worst possible
     outcome is "consent recorded, no location", never "location stored, no consent record".
-    See "Failure handling" in README.md.
+    See "Failure handling" in docs/SECURITY-PRIVACY.md.
 
     No personal data (name, phone, location) is written to this table.
     """
@@ -713,7 +713,7 @@ def kvkk_riza_gerekli_mi(firma_id: str) -> bool:
     """Return whether this company requires explicit consent before storing a location.
 
     Reads firmalar.kvkk_riza_gerekli. If the value is missing or cannot be read, it errs on
-    the safe side and requires consent (fail closed, see "Failure handling" in README.md). See KVKK_RIZA_GEREKLI_VARSAYILAN for why this is a
+    the safe side and requires consent (fail closed, see "Failure handling" in docs/SECURITY-PRIVACY.md). See KVKK_RIZA_GEREKLI_VARSAYILAN for why this is a
     per-company flag.
     """
     if not firma_id:
@@ -804,7 +804,7 @@ async def audit_log_yaz(
     """Record a sensitive action (deletes, password resets and the like) in audit_log.
 
     Never raises: if the write fails, the action still goes through and a warning is sent
-    to Sentry (fail open, see "Failure handling" in README.md).
+    to Sentry (fail open, see "Failure handling" in docs/SECURITY-PRIVACY.md).
     """
     try:
         ip_adresi = None
@@ -994,7 +994,7 @@ async def firma_pasif_mi(firma_id: str) -> bool:
         sentry_sdk.capture_exception(e)
 
     # Not wrapped in try/except on purpose: if the database is unreachable too, the request fails
-    # instead of serving a company whose status is unknown ("Failure handling" in README.md).
+    # instead of serving a company whose status is unknown ("Failure handling" in docs/SECURITY-PRIVACY.md).
     pasif = await run_in_threadpool(_firma_pasif_db_kontrol, firma_id)
 
     try:
@@ -1049,7 +1049,7 @@ async def token_revoked_mi(jti: str) -> bool:
         return is_revoked
     except Exception:
         # Database error: fail open and treat the token as valid, so an outage does not lock
-        # every user out. Rationale and risk: "Failure handling" in README.md.
+        # every user out. Rationale and risk: "Failure handling" in docs/SECURITY-PRIVACY.md.
         return False
     
 async def kullanicinin_tum_tokenlarini_revoke_et(
@@ -1112,7 +1112,7 @@ async def kullanici_gecersiz_zamani(kullanici_adi: str):
         row = (await run_query(supabase.table("kullanici_token_iptal").select("gecersiz_before").eq("kullanici_adi", kullanici_adi))).data
         val = row[0].get("gecersiz_before") if row else None
     except Exception:
-        # Database error too: fail open so an outage does not lock everyone out ("Failure handling" in README.md).
+        # Database error too: fail open so an outage does not lock everyone out ("Failure handling" in docs/SECURITY-PRIVACY.md).
         return None
     try:
         await redis_client.setex(cache_key, 86400, val or "0")
@@ -1222,7 +1222,7 @@ async def yetki_kontrol(credentials: HTTPAuthorizationCredentials = Depends(secu
                 except HTTPException:
                     raise
                 except Exception:
-                    pass  # unparseable cutoff: fail open and accept the token ("Failure handling" in README.md)
+                    pass  # unparseable cutoff: fail open and accept the token ("Failure handling" in docs/SECURITY-PRIVACY.md)
 
         _auth_cache_yaz(jti, payload)
         return payload
@@ -1312,7 +1312,7 @@ def musteri_linki_suresi_doldu(token: str, talep: dict) -> bool:
     and withdrawing consent must stay possible after the link has expired.
     Tokens starting with "DONUS-" (synthetic return rows) or "BTT-" (destroyed links) are not
     customer links. An unparseable date lets the link through rather than lock the customer out
-    (fail open, see "Failure handling" in README.md).
+    (fail open, see "Failure handling" in docs/SECURITY-PRIVACY.md).
     """
     if token.startswith("DONUS-") or token.startswith("BTT-") or not talep.get("kayit_tarihi"):
         return False
@@ -2766,7 +2766,7 @@ async def logout(request: Request, credentials: HTTPAuthorizationCredentials = D
     except Exception as e:
         # Report the failure but still answer "logged out"; the client discards the token.
         # Fail open: if the revocation was not stored, the token stays valid until it expires
-        # ("Failure handling" in README.md).
+        # ("Failure handling" in docs/SECURITY-PRIVACY.md).
         sentry_sdk.capture_exception(e)
     
     return {"mesaj": "Çıkış yapıldı."}
@@ -4418,7 +4418,7 @@ def sifre_belirle(request: Request, istek: SifreBelirleIstek):
             raise  # let the 410 through instead of the handler below
         except (ValueError, TypeError) as e:
             # Unparseable date: fail closed, and report it so the format can be investigated
-            # ("Failure handling" in README.md).
+            # ("Failure handling" in docs/SECURITY-PRIVACY.md).
             sentry_sdk.capture_exception(e)
             raise HTTPException(status_code=410, detail="Davet linki doğrulanamadı. Yöneticinizden yeni link isteyin.")
         
@@ -5225,7 +5225,7 @@ async def riza_red(bilgi: RizaIstek, request: Request):
     )
     # Not fail-closed: if the refusal cannot be logged there is still no reason to block the
     # customer, since no personal data is being processed (no location was taken). See
-    # "Failure handling" in README.md.
+    # "Failure handling" in docs/SECURITY-PRIVACY.md.
 
     # Quick flag for the panel badge, to tell "refused" apart from "never opened the link"
     # (see db/kvkk_riza.sql). Only applied while no location has been given yet; for a
@@ -5260,7 +5260,7 @@ async def riza_geri_cek(bilgi: RizaIstek, request: Request):
     # Log first, so the withdrawal record exists before the data is erased. The result is
     # ignored on purpose (not fail-closed): stopping the erasure because the log write failed
     # would make the customer's legal right depend on a logging error. Failures go to Sentry.
-    # See "Failure handling" in README.md.
+    # See "Failure handling" in docs/SECURITY-PRIVACY.md.
     await riza_kaydi_yaz(
         kanal=kanal, islem="GERI_CEKME", metin_kodu=KVKK_METIN_YOLCU_RIZA,
         firma_id=talep.get("firma_id"), talep_id=talep["id"], request=request
