@@ -6,6 +6,7 @@ import os
 from dotenv import load_dotenv
 load_dotenv()
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel
 from supabase import create_client, Client
 import uuid
@@ -332,7 +333,7 @@ async def websocket_endpoint(websocket: WebSocket):
             arac_id = payload.get("arac_id")
             kimlik = payload.get("kullanici_adi")  # identity used for the per-identity cap
         except jwt.InvalidTokenError:
-            res = supabase.table("talepler").select("arac_id, firma_id, kayit_tarihi, gorev_tipi").eq("token", token).execute()
+            res = await run_query(supabase.table("talepler").select("arac_id, firma_id, kayit_tarihi, gorev_tipi").eq("token", token))
             if not res.data or musteri_linki_suresi_doldu(token, res.data[0]):
                 await websocket.close(code=1008)
                 return
@@ -447,6 +448,18 @@ async def statik_cache_kontrolu(request: Request, call_next):
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
+
+# The Supabase client is synchronous: every query is a blocking HTTP call. Called directly from
+# an `async def` endpoint it would stop the event loop, and with it every other request, for the
+# length of the round trip. So:
+#   - endpoints that await nothing are plain `def`; FastAPI runs them in its thread pool;
+#   - `async def` endpoints and helpers run each query through run_query (below), and call the
+#     synchronous helpers that query the database through run_in_threadpool.
+# Both use the same anyio thread pool (40 threads by default). See docs/PERFORMANCE.md.
+async def run_query(query):
+    """Execute a Supabase query in the thread pool so it does not block the event loop."""
+    return await run_in_threadpool(query.execute)
+
 # Request bodies. Declaring each body as a model (instead of accepting a raw dict) means only the
 # listed fields can reach the database, which prevents mass assignment.
 class MarkaIstek(BaseModel): firma_id: str; marka_adi: str; sube_id: Optional[str] = None
@@ -542,7 +555,7 @@ async def riza_kaydi_yaz(
             ip_adresi = istemci_ip(request)
             user_agent = (request.headers.get("user-agent") or "")[:200] or None
 
-        supabase.table("riza_kayitlari").insert({
+        await run_query(supabase.table("riza_kayitlari").insert({
             "firma_id": firma_id,
             "talep_id": talep_id,
             "kullanici_adi": kullanici_adi,
@@ -553,7 +566,7 @@ async def riza_kaydi_yaz(
             "ip_adresi": ip_adresi,
             "user_agent": user_agent,
             "kayit_tarihi": datetime.now(timezone.utc).isoformat()
-        }).execute()
+        }))
         return True
     except Exception as e:
         # Report to Sentry so a lost consent record does not go unnoticed.
@@ -621,7 +634,7 @@ async def etap_ac(talep: dict, etap: str, baslangic_lat=None, baslangic_lng=None
                 hedef_varis = (simdi + timedelta(minutes=hedef_dakika)).isoformat()
                 mesafe_km = eta.get("km")
 
-        supabase.table("gorev_etaplari").insert({
+        await run_query(supabase.table("gorev_etaplari").insert({
             "talep_id": talep.get("id"),
             "firma_id": talep.get("firma_id"),
             "sube_id": talep.get("sube_id"),
@@ -639,7 +652,7 @@ async def etap_ac(talep: dict, etap: str, baslangic_lat=None, baslangic_lng=None
             "hedef_varis": hedef_varis,
             "hedef_dakika": hedef_dakika,
             "mesafe_km": mesafe_km,
-        }).execute()
+        }))
     except Exception as e:
         sentry_sdk.capture_message(f"ETAP AÇILAMADI: {etap} talep={talep.get('id')} | {str(e)[:200]}",
                                    level="warning")
@@ -657,9 +670,9 @@ async def etap_kapat(talep_id: str, etap: str, basma_lat=None, basma_lng=None,
     stored, never the coordinates.
     """
     try:
-        kayit = supabase.table("gorev_etaplari").select("id, hedef_varis, baslangic").eq(
+        kayit = (await run_query(supabase.table("gorev_etaplari").select("id, hedef_varis, baslangic").eq(
             "talep_id", talep_id).eq("etap", etap).is_("gercek_varis", "null").eq(
-            "iptal_edildi", False).order("baslangic", desc=True).limit(1).execute().data
+            "iptal_edildi", False).order("baslangic", desc=True).limit(1))).data
         if not kayit:
             return  # no open milestone (an older task, or a replayed request)
 
@@ -690,7 +703,7 @@ async def etap_kapat(talep_id: str, etap: str, basma_lat=None, basma_lng=None,
         if konum_dogruluk_m is not None:
             guncelleme["basma_dogruluk_m"] = int(konum_dogruluk_m)
 
-        supabase.table("gorev_etaplari").update(guncelleme).eq("id", kayit[0]["id"]).execute()
+        await run_query(supabase.table("gorev_etaplari").update(guncelleme).eq("id", kayit[0]["id"]))
     except Exception as e:
         sentry_sdk.capture_message(f"ETAP KAPATILAMADI: {etap} talep={talep_id} | {str(e)[:200]}",
                                    level="warning")
@@ -811,7 +824,7 @@ async def audit_log_yaz(
             "tarih": datetime.now(timezone.utc).isoformat()
         }
         
-        supabase.table("audit_log").insert(kayit).execute()
+        await run_query(supabase.table("audit_log").insert(kayit))
     
     except Exception as e:
         # A failed audit write must never break the request it records; report it instead.
@@ -979,7 +992,7 @@ async def firma_pasif_mi(firma_id: str) -> bool:
         # Redis is down: report it and fall back to the database.
         sentry_sdk.capture_exception(e)
 
-    pasif = _firma_pasif_db_kontrol(firma_id)
+    pasif = await run_in_threadpool(_firma_pasif_db_kontrol, firma_id)
 
     try:
         await redis_client.setex(cache_key, 60 if pasif else 1800, "1" if pasif else "0")
@@ -1020,7 +1033,7 @@ async def token_revoked_mi(jti: str) -> bool:
         pass  # Redis error: fall back to the database
 
     try:
-        res = supabase.table("revoked_tokens").select("jti").eq("jti", jti).execute()
+        res = await run_query(supabase.table("revoked_tokens").select("jti").eq("jti", jti))
         is_revoked = bool(res.data)
 
         # Cache revoked for 1 hour and not-revoked for 5 minutes.
@@ -1053,12 +1066,12 @@ async def kullanicinin_tum_tokenlarini_revoke_et(
         # It lives in its own table rather than a column on kullanicilar, because deleting the
         # user row would otherwise delete the cutoff with it.
         try:
-            supabase.table("kullanici_token_iptal").upsert({
+            await run_query(supabase.table("kullanici_token_iptal").upsert({
                 "kullanici_adi": kullanici_adi,
                 "gecersiz_before": gecersizlestirme_zamani,
                 "sebep": sebep,
                 "guncelleme_tarihi": gecersizlestirme_zamani
-            }).execute()
+            }))
         except Exception as e:
             sentry_sdk.capture_exception(e)  # still write the Redis copy below
 
@@ -1093,7 +1106,7 @@ async def kullanici_gecersiz_zamani(kullanici_adi: str):
         pass  # Redis is down: use the database
     val = None
     try:
-        row = supabase.table("kullanici_token_iptal").select("gecersiz_before").eq("kullanici_adi", kullanici_adi).execute().data
+        row = (await run_query(supabase.table("kullanici_token_iptal").select("gecersiz_before").eq("kullanici_adi", kullanici_adi))).data
         val = row[0].get("gecersiz_before") if row else None
     except Exception:
         return None  # database error too: fail open so an outage does not lock everyone out
@@ -1553,7 +1566,7 @@ async def toplu_mail_gonder(istek: TopluMailIstek, request: Request, yetkili = D
     if len(mesaj) > 5000:
         raise HTTPException(status_code=400, detail="Mesaj çok uzun (en fazla 5000 karakter).")
 
-    adminler = supabase.table("kullanicilar").select("kullanici_adi, email").eq("rol", "ADMIN").execute().data
+    adminler = (await run_query(supabase.table("kullanicilar").select("kullanici_adi, email").eq("rol", "ADMIN"))).data
     alicilar = [a for a in adminler if (a.get("email") or "").strip()]
     if not alicilar:
         raise HTTPException(status_code=400, detail="E-posta adresi tanımlı admin bulunamadı.")
@@ -1604,7 +1617,7 @@ async def mail_davet_at(istek: MailDavetIstek, request: Request, yetkili = Depen
     if yetkili.get("rol") in ["SOFOR", "DANISMAN"]:
         raise HTTPException(status_code=403, detail="Mail gönderme yetkiniz yok.")
     
-    hedef_res = supabase.table("kullanicilar").select("kullanici_adi, email, davet_token, firma_id, rol, marka").eq("kullanici_adi", istek.kullanici_adi).execute()
+    hedef_res = await run_query(supabase.table("kullanicilar").select("kullanici_adi, email, davet_token, firma_id, rol, marka").eq("kullanici_adi", istek.kullanici_adi))
     if not hedef_res.data:
         raise HTTPException(status_code=404, detail="Kullanıcı bulunamadı.")
     hedef = hedef_res.data[0]
@@ -1624,7 +1637,7 @@ async def mail_davet_at(istek: MailDavetIstek, request: Request, yetkili = Depen
     if not davet_token:
         raise HTTPException(status_code=400, detail="Bu kullanıcı zaten aktifleşmiş, davet maili gönderilemez.")
 
-    firma_res = supabase.table("firmalar").select("firma_adi").eq("id", hedef.get("firma_id")).execute()
+    firma_res = await run_query(supabase.table("firmalar").select("firma_adi").eq("id", hedef.get("firma_id")))
     firma_adi = firma_res.data[0]["firma_adi"] if firma_res.data else "Sistem"
 
     davet_linki = f"{BASE_URL.rstrip('/')}/sifre.html?token={davet_token}"
@@ -1655,12 +1668,12 @@ async def rota_baslat(arac_id: str, lat: float, lng: float, yetkili = Depends(ye
     # lat/lng are written straight into the vehicle row, so reject impossible values.
     if not (-90.0 <= lat <= 90.0) or not (-180.0 <= lng <= 180.0):
         raise HTTPException(status_code=400, detail="Geçersiz harita koordinatları.")
-    if not sofor_kendi_araci_mi(yetkili, arac_id):
+    if not (await run_in_threadpool(sofor_kendi_araci_mi, yetkili, arac_id)):
         raise HTTPException(status_code=403, detail="Sadece atandığınız araçta işlem yapabilirsiniz.")
     if yetkili["rol"] != "SUPERADMIN":
-        if not (k:=supabase.table("araclar").select("firma_id").eq("id", arac_id).execute()).data or k.data[0].get("firma_id") != yetkili.get("firma_id"): raise HTTPException(status_code=403, detail="Yetkisiz.")
+        if not (k:=(await run_query(supabase.table("araclar").select("firma_id").eq("id", arac_id)))).data or k.data[0].get("firma_id") != yetkili.get("firma_id"): raise HTTPException(status_code=403, detail="Yetkisiz.")
 
-    supabase.table("araclar").update({
+    await run_query(supabase.table("araclar").update({
         "rota_aktif": True,
         "durum": "GÖREVDE",
         "son_durak_lat": lat,  # last completed stop: the first leg is measured from here
@@ -1669,7 +1682,7 @@ async def rota_baslat(arac_id: str, lat: float, lng: float, yetkili = Depends(ye
         "son_lng": lng,
         "son_hareket_zamani": datetime.now(timezone.utc).isoformat(),
         "hareket_saati": None
-    }).eq("id", arac_id).execute()
+    }).eq("id", arac_id))
     
     await manager.broadcast_firma(yetkili.get("firma_id"), "YENILE")
     await manager.broadcast_arac(arac_id, "YENILE") 
@@ -1685,20 +1698,20 @@ async def rota_bitir(arac_id: str, merkeze_donus: bool = True, yetkili = Depends
     This endpoint does several updates without a transaction; replays are made safe by the
     rota_aktif check below, but a failure halfway can leave partial state.
     """
-    arac_data = supabase.table("araclar").select("son_durak_lat, son_durak_lng, firma_id, rota_aktif, sube_id").eq("id", arac_id).execute().data
+    arac_data = (await run_query(supabase.table("araclar").select("son_durak_lat, son_durak_lng, firma_id, rota_aktif, sube_id").eq("id", arac_id))).data
     if not arac_data:
         raise HTTPException(status_code=404, detail="Araç bulunamadı.")
     arac = arac_data[0]
     if yetkili["rol"] != "SUPERADMIN" and arac.get("firma_id") != yetkili.get("firma_id"):
         raise HTTPException(status_code=403, detail="Yetkisiz.")
-    if not sofor_kendi_araci_mi(yetkili, arac_id):
+    if not (await run_in_threadpool(sofor_kendi_araci_mi, yetkili, arac_id)):
         raise HTTPException(status_code=403, detail="Sadece atandığınız araçta işlem yapabilirsiniz.")
     # Idempotency: if the trip is already over, do nothing. The driver app replays queued
     # requests after being offline, and a second run would insert a second return row and
     # double the return distance in reports.
     if not arac.get("rota_aktif"):
         return {"mesaj": "Rota zaten sonlandırılmış."}
-    ref_lat, ref_lng = referans_konum(arac["firma_id"], arac.get("sube_id"))
+    ref_lat, ref_lng = await run_in_threadpool(referans_konum, arac["firma_id"], arac.get("sube_id"))
 
     if merkeze_donus:
         # Returning to base: passengers may still be on board, so their requests stay open.
@@ -1707,7 +1720,7 @@ async def rota_bitir(arac_id: str, merkeze_donus: bool = True, yetkili = Depends
             yol_verisi = await yol_mesafesi_verisi_async(arac["son_durak_lat"], arac["son_durak_lng"], ref_lat, ref_lng)
             donus_km = yol_verisi["km"]
 
-        supabase.table("talepler").insert({
+        await run_query(supabase.table("talepler").insert({
             "token": f"DONUS-{secrets.token_hex(8)}",
             "firma_id": arac["firma_id"],
             "arac_id": arac_id,
@@ -1717,7 +1730,7 @@ async def rota_bitir(arac_id: str, merkeze_donus: bool = True, yetkili = Depends
             "konum_lat": ref_lat,
             "konum_lng": ref_lng,
             "kayit_tarihi": datetime.now(timezone.utc).isoformat()
-        }).execute()
+        }))
 
         son_lat, son_lng = ref_lat, ref_lng
         mesaj = f"Rota bitti. {donus_km} KM dönüş yolu rapora eklendi. Araç merkeze bekleniyor."
@@ -1730,7 +1743,7 @@ async def rota_bitir(arac_id: str, merkeze_donus: bool = True, yetkili = Depends
         
         # There is no arrival at base to close the passengers later, so close them now. Each
         # tracking link is destroyed by rewriting its token with a "BTT-" prefix.
-        aktif_yolcular = supabase.table("talepler").select("id, durum, token, tamamlanma_tarihi").eq("arac_id", arac_id).in_("durum", ["YOLCU ALINDI", "YOLCU INDI", "YOLCU GELMEDİ"]).execute().data
+        aktif_yolcular = (await run_query(supabase.table("talepler").select("id, durum, token, tamamlanma_tarihi").eq("arac_id", arac_id).in_("durum", ["YOLCU ALINDI", "YOLCU INDI", "YOLCU GELMEDİ"]))).data
         for y in aktif_yolcular:
             kalici_durum = "TAMAM_ALINDI" if y["durum"] in ["YOLCU ALINDI", "YOLCU INDI"] else "TAMAM_GELMEDI"
             imha_token = f"BTT-{secrets.token_hex(8)}"
@@ -1741,14 +1754,14 @@ async def rota_bitir(arac_id: str, merkeze_donus: bool = True, yetkili = Depends
             # more accurate than the trip's end.
             if not y.get("tamamlanma_tarihi"):
                 y_guncelleme["tamamlanma_tarihi"] = datetime.now(timezone.utc).isoformat()
-            supabase.table("talepler").update(y_guncelleme).eq("id", y["id"]).execute()
+            await run_query(supabase.table("talepler").update(y_guncelleme).eq("id", y["id"]))
 
-    supabase.table("araclar").update({
+    await run_query(supabase.table("araclar").update({
         "rota_aktif": False,
         "son_durak_lat": son_lat,
         "son_durak_lng": son_lng,
         "durum": yeni_durum
-    }).eq("id", arac_id).execute()
+    }).eq("id", arac_id))
 
     await manager.broadcast_firma(yetkili.get("firma_id"), "YENILE")
     await manager.broadcast_arac(arac_id, "YENILE")
@@ -1767,17 +1780,17 @@ async def arac_durum_guncelle(arac_id: str, durum: str, yetkili = Depends(yetki_
     if durum not in gecerli_durumlar:
         raise HTTPException(status_code=400, detail="Geçersiz araç durumu gönderildi.")
 
-    if not sofor_kendi_araci_mi(yetkili, arac_id):
+    if not (await run_in_threadpool(sofor_kendi_araci_mi, yetkili, arac_id)):
         raise HTTPException(status_code=403, detail="Sadece atandığınız araçta işlem yapabilirsiniz.")
 
     if yetkili["rol"] != "SUPERADMIN":
-        arac_kontrol = supabase.table("araclar").select("firma_id").eq("id", arac_id).execute().data
+        arac_kontrol = (await run_query(supabase.table("araclar").select("firma_id").eq("id", arac_id))).data
         if not arac_kontrol or arac_kontrol[0].get("firma_id") != yetkili.get("firma_id"):
             raise HTTPException(status_code=403, detail="Sadece kendi firmanıza ait araçları güncelleyebilirsiniz.")
 
     # Guard against a late signal: a queued "returning" request that arrives after the
     # vehicle is already at base must not move it back to "returning".
-    arac_durum_kontrol = supabase.table("araclar").select("durum").eq("id", arac_id).execute().data
+    arac_durum_kontrol = (await run_query(supabase.table("araclar").select("durum").eq("id", arac_id))).data
     if not arac_durum_kontrol:
         raise HTTPException(status_code=404, detail="Araç bulunamadı (silinmiş veya geçersiz ID).")
     
@@ -1790,14 +1803,14 @@ async def arac_durum_guncelle(arac_id: str, durum: str, yetkili = Depends(yetki_
         guncelleme_verisi["rota_aktif"] = False
         guncelleme_verisi["hareket_saati"] = None 
 
-    supabase.table("araclar").update(guncelleme_verisi).eq("id", arac_id).execute()
+    await run_query(supabase.table("araclar").update(guncelleme_verisi).eq("id", arac_id))
     
     # Arrived at base: close every passenger still on the vehicle and destroy their links.
     # talepler.token is UNIQUE, so each row needs its own "BTT-" token and its own update; a
     # single bulk update would write the same token to every row and violate the constraint.
     # Same pattern as rota-bitir.
     if durum == "MERKEZDE":
-        aktif_yolcular = supabase.table("talepler").select("id, durum, tamamlanma_tarihi").eq("arac_id", arac_id).in_("durum", ["YOLCU ALINDI", "YOLCU INDI", "YOLCU GELMEDİ"]).execute().data
+        aktif_yolcular = (await run_query(supabase.table("talepler").select("id, durum, tamamlanma_tarihi").eq("arac_id", arac_id).in_("durum", ["YOLCU ALINDI", "YOLCU INDI", "YOLCU GELMEDİ"]))).data
 
         for y in aktif_yolcular:
             kalici_durum = "TAMAM_ALINDI" if y["durum"] in ["YOLCU ALINDI", "YOLCU INDI"] else "TAMAM_GELMEDI"
@@ -1806,7 +1819,7 @@ async def arac_durum_guncelle(arac_id: str, durum: str, yetkili = Depends(yetki_
             # Same safety net as in rota-bitir for rows without a completion time.
             if not y.get("tamamlanma_tarihi"):
                 y_guncelleme["tamamlanma_tarihi"] = datetime.now(timezone.utc).isoformat()
-            supabase.table("talepler").update(y_guncelleme).eq("id", y["id"]).execute()
+            await run_query(supabase.table("talepler").update(y_guncelleme).eq("id", y["id"]))
 
     await manager.broadcast_firma(yetkili.get("firma_id"), "YENILE")
     await manager.broadcast_arac(arac_id, "YENILE")
@@ -1836,14 +1849,14 @@ async def talep_olustur(talep: YeniTalep, request: Request, yetkili = Depends(ye
     # create them. Shuttle requests likewise need the shuttle module.
     temiz_musteri_plaka = ""
     if talep.gorev_tipi.startswith("VALE_"):
-        f_vale = supabase.table("firmalar").select("vale_aktif").eq("id", talep.firma_id).execute().data
+        f_vale = (await run_query(supabase.table("firmalar").select("vale_aktif").eq("id", talep.firma_id))).data
         if not f_vale or not f_vale[0].get("vale_aktif"):
             raise HTTPException(status_code=400, detail="Bu firmada vale hizmeti tanımlı değil.")
         if not talep.musteri_plaka.strip():
             raise HTTPException(status_code=400, detail="Vale görevlerinde araç plakası girilmesi zorunludur.")
         temiz_musteri_plaka = validate_plaka(talep.musteri_plaka)
     else:
-        f_sh = supabase.table("firmalar").select("shuttle_aktif").eq("id", talep.firma_id).execute().data
+        f_sh = (await run_query(supabase.table("firmalar").select("shuttle_aktif").eq("id", talep.firma_id))).data
         if f_sh and f_sh[0].get("shuttle_aktif") is False:
             raise HTTPException(status_code=400, detail="Bu firmada shuttle hizmeti tanımlı değil.")
 
@@ -1854,7 +1867,7 @@ async def talep_olustur(talep: YeniTalep, request: Request, yetkili = Depends(ye
             raise HTTPException(status_code=400, detail="Servisteki araç bağlantısı yalnız teslim görevinde kullanılır.")
         if not _gecerli_uuid(talep.iliskili_talep_id):
             raise HTTPException(status_code=400, detail="Geçersiz araç kaydı.")
-        kaynak = supabase.table("talepler").select("id, firma_id, gorev_tipi, durum, musteri_plaka").eq("id", talep.iliskili_talep_id).execute().data
+        kaynak = (await run_query(supabase.table("talepler").select("id, firma_id, gorev_tipi, durum, musteri_plaka").eq("id", talep.iliskili_talep_id))).data
         if not kaynak:
             raise HTTPException(status_code=404, detail="Servisteki araç kaydı bulunamadı.")
         k = kaynak[0]
@@ -1870,7 +1883,7 @@ async def talep_olustur(talep: YeniTalep, request: Request, yetkili = Depends(ye
         # opened after a cancellation. The filter runs in Python on purpose: `.neq("durum", ...)`
         # in SQL also drops rows whose status is NULL (NULL != 'X' is NULL), so such a row would
         # slip past the check. The serviste_kapandi filter avoids the same trap the same way.
-        bagli_teslimler = supabase.table("talepler").select("id, durum").eq("iliskili_talep_id", k["id"]).execute().data
+        bagli_teslimler = (await run_query(supabase.table("talepler").select("id, durum").eq("iliskili_talep_id", k["id"]))).data
         if any(b.get("durum") != "IPTAL_EDILDI" for b in bagli_teslimler):
             raise HTTPException(status_code=409, detail="Bu araç için zaten bir teslim görevi açılmış.")
         iliskili_id = k["id"]
@@ -1883,7 +1896,7 @@ async def talep_olustur(talep: YeniTalep, request: Request, yetkili = Depends(ye
         if talep.firma_id != yetkili.get("firma_id"):
             raise HTTPException(status_code=403, detail="Sadece kendi firmanıza yolcu ekleyebilirsiniz.")
         
-        arac_res = supabase.table("araclar").select("firma_id").eq("id", talep.arac_id).execute()
+        arac_res = await run_query(supabase.table("araclar").select("firma_id").eq("id", talep.arac_id))
         if not arac_res.data or arac_res.data[0]["firma_id"] != yetkili.get("firma_id"):
             raise HTTPException(status_code=403, detail="Seçilen araç firmanıza ait değil.")
 
@@ -1896,7 +1909,7 @@ async def talep_olustur(talep: YeniTalep, request: Request, yetkili = Depends(ye
     talep_sube_id = None
     arac_tip = "SERVIS"
     if talep.arac_id:
-        arac_sube = supabase.table("araclar").select("sube_id, tip").eq("id", talep.arac_id).execute().data
+        arac_sube = (await run_query(supabase.table("araclar").select("sube_id, tip").eq("id", talep.arac_id))).data
         talep_sube_id = arac_sube[0].get("sube_id") if arac_sube else None
         arac_tip = (arac_sube[0].get("tip") or "SERVIS") if arac_sube else "SERVIS"
     # Task type must match vehicle type. The panel already filters this; the API must too.
@@ -1912,8 +1925,8 @@ async def talep_olustur(talep: YeniTalep, request: Request, yetkili = Depends(ye
     # had been handed over. There is deliberately no date filter: an unfinished task from an
     # earlier day still keeps the valet busy.
     if talep.gorev_tipi.startswith("VALE_"):
-        mevcut_gorev = supabase.table("talepler").select("musteri_plaka, musteri_ad, durum").eq(
-            "arac_id", talep.arac_id).in_("durum", VALE_AKTIF_DURUMLAR).limit(1).execute().data
+        mevcut_gorev = (await run_query(supabase.table("talepler").select("musteri_plaka, musteri_ad, durum").eq(
+            "arac_id", talep.arac_id).in_("durum", VALE_AKTIF_DURUMLAR).limit(1))).data
         if mevcut_gorev:
             m = mevcut_gorev[0]
             tanim = (m.get("musteri_plaka") or m.get("musteri_ad") or "").strip()
@@ -1926,7 +1939,7 @@ async def talep_olustur(talep: YeniTalep, request: Request, yetkili = Depends(ye
 
     baslangic_durumu = "BEKLIYOR_KONUM" if talep.gorev_tipi.startswith("VALE_") else "BEKLİYOR"
 
-    supabase.table("talepler").insert({
+    await run_query(supabase.table("talepler").insert({
         "token": token,
         "musteri_ad": temiz_musteri_ad,
         "musteri_tel": talep.musteri_tel,
@@ -1940,13 +1953,13 @@ async def talep_olustur(talep: YeniTalep, request: Request, yetkili = Depends(ye
         # Linking to the pickup task removes the car from the "waiting at service" list.
         "iliskili_talep_id": iliskili_id,
         "kayit_tarihi": datetime.now(timezone.utc).isoformat()
-    }).execute()
+    }))
 
     # Destroy the pickup task's link now that a delivery link exists. While the car waited, the
     # old link showed "your car is at the service center"; keeping only one live link per car
     # also limits how much personal data is reachable.
     if iliskili_id:
-        supabase.table("talepler").update({"token": f"BTT-{secrets.token_hex(8)}"}).eq("id", iliskili_id).execute()
+        await run_query(supabase.table("talepler").update({"token": f"BTT-{secrets.token_hex(8)}"}).eq("id", iliskili_id))
     
     await manager.broadcast_firma(yetkili["firma_id"], "YENILE")
 
@@ -1971,7 +1984,7 @@ async def konum_dogrula(onay: KonumOnay, request: Request):
         raise HTTPException(status_code=400, detail="Konum seçilmemiş görünüyor. Lütfen haritadan geçerli bir nokta seçin.")
 
     # Needed for both the stop ownership check and the consent check below.
-    talep_kayit = supabase.table("talepler").select("id, firma_id, kayit_tarihi, gorev_tipi").eq("token", onay.token).execute().data
+    talep_kayit = (await run_query(supabase.table("talepler").select("id, firma_id, kayit_tarihi, gorev_tipi").eq("token", onay.token))).data
     if not talep_kayit:
         raise HTTPException(status_code=404, detail="Talep bulunamadı.")
     if musteri_linki_suresi_doldu(onay.token, talep_kayit[0]):
@@ -1980,14 +1993,14 @@ async def konum_dogrula(onay: KonumOnay, request: Request):
 
     # The chosen stop must belong to the same company as the request.
     if onay.secilen_durak_id:
-        durak_kontrol = supabase.table("duraklar").select("firma_id").eq("id", onay.secilen_durak_id).execute().data
+        durak_kontrol = (await run_query(supabase.table("duraklar").select("firma_id").eq("id", onay.secilen_durak_id))).data
 
         if not durak_kontrol or durak_kontrol[0].get("firma_id") != talep_firma_id:
             raise HTTPException(status_code=403, detail="Seçilen durak geçersiz veya bu firmaya ait değil!")
 
     # Consent check, before any location is written. If consent is required: no consent means
     # 400; otherwise the consent log is written first (fail closed) and only then the location.
-    riza_gerekli = kvkk_riza_gerekli_mi(talep_firma_id)
+    riza_gerekli = await run_in_threadpool(kvkk_riza_gerekli_mi, talep_firma_id)
     if riza_gerekli:
         if not onay.riza_onay:
             raise HTTPException(
@@ -2007,7 +2020,7 @@ async def konum_dogrula(onay: KonumOnay, request: Request):
     # The status filter in the update is the guard: a request that has moved on (picked up,
     # dropped off, completed) must not be rolled back to KONUM ALINDI, or the passenger would
     # reappear on the driver's route and shift every ETA on that vehicle.
-    guncelleme = supabase.table("talepler").update({
+    guncelleme = await run_query(supabase.table("talepler").update({
         "durum": "KONUM ALINDI",
         "konum_lat": onay.lat,
         "konum_lng": onay.lng,
@@ -2019,7 +2032,7 @@ async def konum_dogrula(onay: KonumOnay, request: Request):
         # A customer who first refused and then came back loses the "refused" badge (both
         # events remain in the consent log).
         "riza_reddedildi": False
-    }).eq("token", onay.token).in_("durum", ["BEKLİYOR", "KONUM ALINDI"]).execute()
+    }).eq("token", onay.token).in_("durum", ["BEKLİYOR", "KONUM ALINDI"]))
 
     if not guncelleme.data:
         # Either the token does not exist or the request has already moved on.
@@ -2044,17 +2057,17 @@ async def sofor_rotasi(arac_id: str, lat: float, lng: float, yetkili = Depends(y
     if not (-90.0 <= lat <= 90.0) or not (-180.0 <= lng <= 180.0):
         raise HTTPException(status_code=400, detail="Geçersiz harita koordinatları.")
     # Drivers only see their own vehicle's route, which contains passenger personal data.
-    if not sofor_kendi_araci_mi(yetkili, arac_id):
+    if not (await run_in_threadpool(sofor_kendi_araci_mi, yetkili, arac_id)):
         raise HTTPException(status_code=403, detail="Sadece atandığınız araçta işlem yapabilirsiniz.")
     if yetkili["rol"] != "SUPERADMIN":
-        if not (k:=supabase.table("araclar").select("firma_id").eq("id", arac_id).execute()).data or k.data[0].get("firma_id") != yetkili.get("firma_id"): raise HTTPException(status_code=403)
+        if not (k:=(await run_query(supabase.table("araclar").select("firma_id").eq("id", arac_id)))).data or k.data[0].get("firma_id") != yetkili.get("firma_id"): raise HTTPException(status_code=403)
     # son_hareket_zamani records when the position was written. The admin map shows it as
     # "last seen", so a stale marker is not mistaken for a live position.
-    supabase.table("araclar").update({
+    await run_query(supabase.table("araclar").update({
         "son_lat": lat, "son_lng": lng, "son_hareket_zamani": datetime.now(timezone.utc).isoformat()
-    }).eq("id", arac_id).execute()
+    }).eq("id", arac_id))
 
-    talepler = supabase.table("talepler").select("*").eq("arac_id", arac_id).in_("durum", ["KONUM ALINDI", "SERVIS_HAZIR"]).gte("kayit_tarihi", tr_bugun_baslangic_utc_iso()).execute().data
+    talepler = (await run_query(supabase.table("talepler").select("*").eq("arac_id", arac_id).in_("durum", ["KONUM ALINDI", "SERVIS_HAZIR"]).gte("kayit_tarihi", tr_bugun_baslangic_utc_iso()))).data
     # Drop requests without a location. Their coordinates go straight into the distance
     # functions below, and a single None would raise a TypeError and fail the whole route for
     # the driver. This happens when a location was erased while the request stayed active
@@ -2063,13 +2076,13 @@ async def sofor_rotasi(arac_id: str, lat: float, lng: float, yetkili = Depends(y
     if not talepler: return []
 
     firma_id = talepler[0].get("firma_id")
-    firma_data = supabase.table("firmalar").select("merkez_lat, merkez_lng, sistem_modu").eq("id", firma_id).execute().data
+    firma_data = (await run_query(supabase.table("firmalar").select("merkez_lat, merkez_lng, sistem_modu").eq("id", firma_id))).data
     if not firma_data:
         return []
     firma = firma_data[0]
     s_mod = firma.get("sistem_modu", "HARITA")
     # Base point: the vehicle's branch, else company HQ. A request carries its vehicle's branch.
-    m_lat, m_lng = referans_konum(firma_id, talepler[0].get("sube_id"), (firma.get("merkez_lat"), firma.get("merkez_lng")))
+    m_lat, m_lng = await run_in_threadpool(referans_konum, firma_id, talepler[0].get("sube_id"), (firma.get("merkez_lat"), firma.get("merkez_lng")))
 
     # Road distance/time from the driver (fetched in parallel), and straight-line distance
     # from base, which drives the ordering.
@@ -2091,7 +2104,7 @@ async def sofor_rotasi(arac_id: str, lat: float, lng: float, yetkili = Depends(y
 
     # Ordering depends on the company's mode: fixed stops (DURAK) or door-to-door (HARITA).
     if s_mod == "DURAK":
-        durak_verileri = supabase.table("duraklar").select("id, sira_no, durak_adi").eq("firma_id", firma_id).execute().data
+        durak_verileri = (await run_query(supabase.table("duraklar").select("id, sira_no, durak_adi").eq("firma_id", firma_id))).data
         durak_dict = {d["id"]: {"sira_no": d["sira_no"], "durak_adi": d["durak_adi"]} for d in durak_verileri}
 
         for t in talepler:
@@ -2107,9 +2120,9 @@ async def sofor_rotasi(arac_id: str, lat: float, lng: float, yetkili = Depends(y
         # /guzergah-tipi-hesapla): LINE is distance based (out and back); YARIM_AY ("half
         # moon", a loop) and NULL follow the stops' sira_no.
         guzergah_tip = None
-        arac_guz = supabase.table("araclar").select("guzergah_id").eq("id", arac_id).execute().data
+        arac_guz = (await run_query(supabase.table("araclar").select("guzergah_id").eq("id", arac_id))).data
         if arac_guz and arac_guz[0].get("guzergah_id"):
-            guz_row = supabase.table("guzergahlar").select("tip").eq("id", arac_guz[0]["guzergah_id"]).execute().data
+            guz_row = (await run_query(supabase.table("guzergahlar").select("tip").eq("id", arac_guz[0]["guzergah_id"]))).data
             if guz_row:
                 guzergah_tip = guz_row[0].get("tip")
 
@@ -2144,7 +2157,7 @@ async def yolcu_alindi(token: str, yetkili = Depends(yetki_kontrol)):
     Records the road distance from the previous stop and moves the vehicle's "previous stop"
     to this passenger. /yolcu-gelmedi and /yolcu-indi follow the same pattern.
     """
-    talep_kontrol = supabase.table("talepler").select("firma_id, arac_id, konum_lat, konum_lng, durum").eq("token", token).execute()
+    talep_kontrol = await run_query(supabase.table("talepler").select("firma_id, arac_id, konum_lat, konum_lng, durum").eq("token", token))
     if not talep_kontrol.data: raise HTTPException(status_code=404, detail="Talep bulunamadı.")
     talep = talep_kontrol.data[0]
     # Idempotency: the driver app replays queued actions after being offline, so a repeat
@@ -2156,12 +2169,12 @@ async def yolcu_alindi(token: str, yetkili = Depends(yetki_kontrol)):
         raise HTTPException(status_code=403, detail="Yetkisiz işlem.")
     # Same rule as the route endpoints: a field role may only mark passengers of the vehicle
     # assigned to them, not any vehicle in their company.
-    if not sofor_kendi_araci_mi(yetkili, talep.get("arac_id")):
+    if not (await run_in_threadpool(sofor_kendi_araci_mi, yetkili, talep.get("arac_id"))):
         raise HTTPException(status_code=403, detail="Sadece atandığınız araçta işlem yapabilirsiniz.")
 
     # Distance is measured from the previous stop (son_durak_lat/lng), not from a live GPS
     # position: the driver app has no continuous tracking.
-    arac_data = supabase.table("araclar").select("son_durak_lat, son_durak_lng, rota_aktif").eq("id", talep["arac_id"]).execute().data
+    arac_data = (await run_query(supabase.table("araclar").select("son_durak_lat, son_durak_lng, rota_aktif").eq("id", talep["arac_id"]))).data
     if not arac_data:
         raise HTTPException(status_code=404, detail="Araç bulunamadı.")
     arac = arac_data[0]
@@ -2177,21 +2190,21 @@ async def yolcu_alindi(token: str, yetkili = Depends(yetki_kontrol)):
 
     # tamamlanma_tarihi (completion time) feeds the start-end times on the panels and the
     # "completed today" filter. Stored in UTC; the panels display it in Istanbul time.
-    supabase.table("talepler").update({
+    await run_query(supabase.table("talepler").update({
         "durum": "YOLCU ALINDI",
         "mesafe_km": yapilan_km,
         "tamamlanma_tarihi": datetime.now(timezone.utc).isoformat()
-    }).eq("token", token).execute()
+    }).eq("token", token))
     
     # This passenger's location becomes the starting point of the next leg and the vehicle's
     # shown position.
-    supabase.table("araclar").update({
+    await run_query(supabase.table("araclar").update({
         "son_durak_lat": talep["konum_lat"], 
         "son_durak_lng": talep["konum_lng"],
         "son_lat": talep["konum_lat"],
         "son_lng": talep["konum_lng"],
         "son_hareket_zamani": datetime.now(timezone.utc).isoformat()
-    }).eq("id", talep["arac_id"]).execute()
+    }).eq("id", talep["arac_id"]))
 
     await manager.broadcast_firma(yetkili["firma_id"], "YENILE")
     await manager.broadcast_arac(talep["arac_id"], "YENILE")
@@ -2200,7 +2213,7 @@ async def yolcu_alindi(token: str, yetkili = Depends(yetki_kontrol)):
 @app.post("/yolcu-gelmedi")
 async def yolcu_gelmedi(token: str, yetkili = Depends(yetki_kontrol)):
     """Driver app: mark a passenger as a no-show. The distance driven is still recorded."""
-    talep_kontrol = supabase.table("talepler").select("firma_id, arac_id, konum_lat, konum_lng, durum").eq("token", token).execute()
+    talep_kontrol = await run_query(supabase.table("talepler").select("firma_id, arac_id, konum_lat, konum_lng, durum").eq("token", token))
     if not talep_kontrol.data: raise HTTPException(status_code=404, detail="Talep bulunamadı.")
     talep = talep_kontrol.data[0]
     if talep.get("durum") == "YOLCU GELMEDİ":  # idempotent replay
@@ -2209,10 +2222,10 @@ async def yolcu_gelmedi(token: str, yetkili = Depends(yetki_kontrol)):
     if yetkili["rol"] != "SUPERADMIN" and talep.get("firma_id") != yetkili.get("firma_id"): 
         raise HTTPException(status_code=403, detail="Yetkisiz işlem.")
     # A field role may only act on its own vehicle (see /yolcu-alindi).
-    if not sofor_kendi_araci_mi(yetkili, talep.get("arac_id")):
+    if not (await run_in_threadpool(sofor_kendi_araci_mi, yetkili, talep.get("arac_id"))):
         raise HTTPException(status_code=403, detail="Sadece atandığınız araçta işlem yapabilirsiniz.")
 
-    arac_data = supabase.table("araclar").select("son_durak_lat, son_durak_lng, rota_aktif").eq("id", talep["arac_id"]).execute().data
+    arac_data = (await run_query(supabase.table("araclar").select("son_durak_lat, son_durak_lng, rota_aktif").eq("id", talep["arac_id"]))).data
     if not arac_data:
         raise HTTPException(status_code=404, detail="Araç bulunamadı.")
     arac = arac_data[0]
@@ -2227,20 +2240,20 @@ async def yolcu_gelmedi(token: str, yetkili = Depends(yetki_kontrol)):
         yapilan_km = yol_verisi["km"]
 
     # A no-show also completes the request, so it gets a completion time too.
-    supabase.table("talepler").update({
+    await run_query(supabase.table("talepler").update({
         "durum": "YOLCU GELMEDİ",
         "mesafe_km": yapilan_km,
         "tamamlanma_tarihi": datetime.now(timezone.utc).isoformat()
-    }).eq("token", token).execute()
+    }).eq("token", token))
     
     # The next leg starts from here.
-    supabase.table("araclar").update({
+    await run_query(supabase.table("araclar").update({
         "son_durak_lat": talep["konum_lat"], 
         "son_durak_lng": talep["konum_lng"],
         "son_lat": talep["konum_lat"],
         "son_lng": talep["konum_lng"],
         "son_hareket_zamani": datetime.now(timezone.utc).isoformat()
-    }).eq("id", talep["arac_id"]).execute()
+    }).eq("id", talep["arac_id"]))
 
     await manager.broadcast_firma(yetkili["firma_id"], "YENILE")
     await manager.broadcast_arac(talep["arac_id"], "YENILE")
@@ -2252,13 +2265,13 @@ async def yolcu_devret(token: str, yeni_arac_id: str, yetkili = Depends(yetki_ko
     if yetkili["rol"] not in ["ADMIN", "SUPERADMIN", "OPERASYON"]: 
         raise HTTPException(status_code=403, detail="Sadece yöneticiler ve operasyon sorumluları yolcu aktarabilir.")
 
-    talep = supabase.table("talepler").select("*").eq("token", token).execute().data
+    talep = (await run_query(supabase.table("talepler").select("*").eq("token", token))).data
     if not talep: raise HTTPException(status_code=404, detail="Yolcu bulunamadı.")
     
     eski_arac_id = talep[0]["arac_id"]
     talep_firma_id = talep[0]["firma_id"]
 
-    yeni_arac_kontrol = supabase.table("araclar").select("firma_id, sube_id").eq("id", yeni_arac_id).execute().data
+    yeni_arac_kontrol = (await run_query(supabase.table("araclar").select("firma_id, sube_id").eq("id", yeni_arac_id))).data
     if not yeni_arac_kontrol:
         raise HTTPException(status_code=404, detail="Hedef araç bulunamadı.")
     yeni_arac_sube = yeni_arac_kontrol[0].get("sube_id")
@@ -2276,7 +2289,7 @@ async def yolcu_devret(token: str, yeni_arac_id: str, yetkili = Depends(yetki_ko
         raise HTTPException(status_code=400, detail="Sadece araca henüz binmemiş yolcular aktarılabilir.")
 
     # The request takes the branch of its new vehicle.
-    supabase.table("talepler").update({"arac_id": yeni_arac_id, "sube_id": yeni_arac_sube}).eq("token", token).execute()
+    await run_query(supabase.table("talepler").update({"arac_id": yeni_arac_id, "sube_id": yeni_arac_sube}).eq("token", token))
 
     await manager.broadcast_arac(eski_arac_id, "YENILE") 
     await manager.broadcast_arac(yeni_arac_id, "YENILE") 
@@ -2292,7 +2305,7 @@ async def talep_detay_getir(token: str, request: Request):
     The response is the request row plus vehicle, company, KVKK notice and valet fields.
     After a valet delivery it switches to a reduced "survey mode" response.
     """
-    res = supabase.table("talepler").select("*").eq("token", token).execute()
+    res = await run_query(supabase.table("talepler").select("*").eq("token", token))
     if not res.data: raise HTTPException(status_code=404, detail="Geçersiz link.")
     yolcu = res.data[0]
 
@@ -2322,8 +2335,8 @@ async def talep_detay_getir(token: str, request: Request):
         # Once the survey is submitted the window closes, so the form is never shown twice.
         if anket_acik:
             try:
-                _var = supabase.table("memnuniyet_anketleri").select("id").eq(
-                    "talep_id", yolcu.get("id")).limit(1).execute().data
+                _var = (await run_query(supabase.table("memnuniyet_anketleri").select("id").eq(
+                    "talep_id", yolcu.get("id")).limit(1))).data
                 if _var:
                     anket_acik = False
             except Exception as e:
@@ -2336,8 +2349,8 @@ async def talep_detay_getir(token: str, request: Request):
             # cleanup deletes the row anyway.
             if not token.startswith("BTT-"):
                 try:
-                    supabase.table("talepler").update(
-                        {"token": f"BTT-{secrets.token_hex(8)}"}).eq("id", yolcu.get("id")).execute()
+                    await run_query(supabase.table("talepler").update(
+                        {"token": f"BTT-{secrets.token_hex(8)}"}).eq("id", yolcu.get("id")))
                 except Exception as e:
                     sentry_sdk.capture_exception(e)
             raise HTTPException(status_code=410, detail="Bu link süresi dolmuş.")
@@ -2351,7 +2364,7 @@ async def talep_detay_getir(token: str, request: Request):
         }
 
     # Last position fields are read for the valet ETA further down.
-    arac_res = supabase.table("araclar").select("rota_aktif, plaka, guzergah_id, hareket_saati, son_lat, son_lng, son_hareket_zamani").eq("id", yolcu.get("arac_id")).execute()
+    arac_res = await run_query(supabase.table("araclar").select("rota_aktif, plaka, guzergah_id, hareket_saati, son_lat, son_lng, son_hareket_zamani").eq("id", yolcu.get("arac_id")))
     if arac_res.data:
         yolcu["rota_aktif"] = arac_res.data[0].get("rota_aktif")
         yolcu["arac_plaka"] = arac_res.data[0].get("plaka") 
@@ -2366,13 +2379,13 @@ async def talep_detay_getir(token: str, request: Request):
     # Company mode plus its KVKK details, in one query. For passenger data the data controller
     # is the customer's company (the platform is only the processor), so the company's legal
     # name and contact channel must appear in the privacy notice on the customer page.
-    firma_res = supabase.table("firmalar").select(
+    firma_res = await run_query(supabase.table("firmalar").select(
         "merkez_lat, merkez_lng, sistem_modu, kvkk_unvan, kvkk_basvuru_kanali, kvkk_adres, kvkk_riza_gerekli"
-    ).eq("id", yolcu.get("firma_id")).execute()
+    ).eq("id", yolcu.get("firma_id")))
     if firma_res.data:
         _fm = (firma_res.data[0].get("merkez_lat"), firma_res.data[0].get("merkez_lng"))
         # Base point shown to the customer: the request's branch, else company HQ.
-        _rl, _rg = referans_konum(yolcu.get("firma_id"), yolcu.get("sube_id"), _fm)
+        _rl, _rg = await run_in_threadpool(referans_konum, yolcu.get("firma_id"), yolcu.get("sube_id"), _fm)
         yolcu["merkez_lat"] = _rl
         yolcu["merkez_lng"] = _rg
         yolcu["sistem_modu"] = firma_res.data[0].get("sistem_modu", "HARITA")
@@ -2395,8 +2408,8 @@ async def talep_detay_getir(token: str, request: Request):
     # plate: the virtual vehicle's plate field holds the valet's username, which must not be
     # shown to customers. Only valet tasks pay for this extra query.
     if str(yolcu.get("gorev_tipi") or "").startswith("VALE_") and yolcu.get("arac_id"):
-        _v = supabase.table("kullanicilar").select("kullanici_adi, gorunen_ad").eq(
-            "arac_id", yolcu["arac_id"]).eq("rol", "VALE").limit(1).execute().data
+        _v = (await run_query(supabase.table("kullanicilar").select("kullanici_adi, gorunen_ad").eq(
+            "arac_id", yolcu["arac_id"]).eq("rol", "VALE").limit(1))).data
         if _v:
             # No display name: leave it empty instead of falling back to the username. Hiding
             # the staff line looks better than showing a login name.
@@ -2451,9 +2464,9 @@ async def talep_detay_getir(token: str, request: Request):
         # A wrong time is worse than a vague one.
         if not yolcu.get("vale_varis_saati"):
             try:
-                _etap = supabase.table("gorev_etaplari").select("hedef_varis").eq(
+                _etap = (await run_query(supabase.table("gorev_etaplari").select("hedef_varis").eq(
                     "talep_id", yolcu.get("id")).is_("gercek_varis", "null").eq(
-                    "iptal_edildi", False).order("baslangic", desc=True).limit(1).execute().data
+                    "iptal_edildi", False).order("baslangic", desc=True).limit(1))).data
                 if _etap and _etap[0].get("hedef_varis"):
                     if supabase_tarih_parse(_etap[0]["hedef_varis"]) > datetime.now(timezone.utc):
                         yolcu["vale_varis_saati"] = _etap[0]["hedef_varis"]
@@ -2469,13 +2482,13 @@ async def servis_hazir(arac_id: str, yetkili = Depends(yetki_kontrol)):
 
     Moves the vehicle's DAGITIM (drop-off) requests in KONUM ALINDI to SERVIS_HAZIR.
     """
-    if not sofor_kendi_araci_mi(yetkili, arac_id):
+    if not (await run_in_threadpool(sofor_kendi_araci_mi, yetkili, arac_id)):
         raise HTTPException(status_code=403, detail="Sadece atandığınız araçta işlem yapabilirsiniz.")
     if yetkili["rol"] != "SUPERADMIN":
-        if not (k:=supabase.table("araclar").select("firma_id").eq("id", arac_id).execute()).data or k.data[0].get("firma_id") != yetkili.get("firma_id"): raise HTTPException(status_code=403)
+        if not (k:=(await run_query(supabase.table("araclar").select("firma_id").eq("id", arac_id)))).data or k.data[0].get("firma_id") != yetkili.get("firma_id"): raise HTTPException(status_code=403)
     # Only today's requests, with the same filter as sofor-rotasi: a drop-off request left open
     # from an earlier day is not on today's route and must not be told the shuttle is ready.
-    guncelleme = supabase.table("talepler").update({"durum": "SERVIS_HAZIR"}).eq("arac_id", arac_id).eq("gorev_tipi", "DAGITIM").eq("durum", "KONUM ALINDI").gte("kayit_tarihi", tr_bugun_baslangic_utc_iso()).execute()
+    guncelleme = await run_query(supabase.table("talepler").update({"durum": "SERVIS_HAZIR"}).eq("arac_id", arac_id).eq("gorev_tipi", "DAGITIM").eq("durum", "KONUM ALINDI").gte("kayit_tarihi", tr_bugun_baslangic_utc_iso()))
     await manager.broadcast_firma(yetkili["firma_id"], "YENILE")
     await manager.broadcast_arac(arac_id, "YENILE")
     return {"mesaj": f"{len(guncelleme.data)} mesaj iletildi."}
@@ -2483,7 +2496,7 @@ async def servis_hazir(arac_id: str, yetkili = Depends(yetki_kontrol)):
 @app.post("/yolcu-indi")
 async def yolcu_indi(token: str, yetkili = Depends(yetki_kontrol)):
     """Driver app: mark a drop-off passenger as delivered to their destination."""
-    talep_kontrol = supabase.table("talepler").select("firma_id, arac_id, konum_lat, konum_lng, durum").eq("token", token).execute()
+    talep_kontrol = await run_query(supabase.table("talepler").select("firma_id, arac_id, konum_lat, konum_lng, durum").eq("token", token))
     if not talep_kontrol.data: raise HTTPException(status_code=404, detail="Talep bulunamadı.")
     talep = talep_kontrol.data[0]
     # Idempotent replay. Note the stored value is "YOLCU INDI", without the Turkish dotless i.
@@ -2493,10 +2506,10 @@ async def yolcu_indi(token: str, yetkili = Depends(yetki_kontrol)):
     if yetkili["rol"] != "SUPERADMIN" and talep.get("firma_id") != yetkili.get("firma_id"): 
         raise HTTPException(status_code=403, detail="Yetkisiz işlem.")
     # A field role may only act on its own vehicle (see /yolcu-alindi).
-    if not sofor_kendi_araci_mi(yetkili, talep.get("arac_id")):
+    if not (await run_in_threadpool(sofor_kendi_araci_mi, yetkili, talep.get("arac_id"))):
         raise HTTPException(status_code=403, detail="Sadece atandığınız araçta işlem yapabilirsiniz.")
 
-    arac_data = supabase.table("araclar").select("son_durak_lat, son_durak_lng, rota_aktif").eq("id", talep["arac_id"]).execute().data
+    arac_data = (await run_query(supabase.table("araclar").select("son_durak_lat, son_durak_lng, rota_aktif").eq("id", talep["arac_id"]))).data
     if not arac_data:
         raise HTTPException(status_code=404, detail="Araç bulunamadı.")
     arac = arac_data[0]
@@ -2510,20 +2523,20 @@ async def yolcu_indi(token: str, yetkili = Depends(yetki_kontrol)):
         yol_verisi = await yol_mesafesi_verisi_async(arac["son_durak_lat"], arac["son_durak_lng"], talep["konum_lat"], talep["konum_lng"])
         yapilan_km = yol_verisi["km"]
 
-    supabase.table("talepler").update({
+    await run_query(supabase.table("talepler").update({
         "durum": "YOLCU INDI",
         "mesafe_km": yapilan_km,
         "tamamlanma_tarihi": datetime.now(timezone.utc).isoformat()
-    }).eq("token", token).execute()
+    }).eq("token", token))
     
     # The next leg starts from here.
-    supabase.table("araclar").update({
+    await run_query(supabase.table("araclar").update({
         "son_durak_lat": talep["konum_lat"], 
         "son_durak_lng": talep["konum_lng"],
         "son_lat": talep["konum_lat"],
         "son_lng": talep["konum_lng"],
         "son_hareket_zamani": datetime.now(timezone.utc).isoformat()
-    }).eq("id", talep["arac_id"]).execute()
+    }).eq("id", talep["arac_id"]))
 
     await manager.broadcast_firma(yetkili["firma_id"], "YENILE")
     await manager.broadcast_arac(talep["arac_id"], "YENILE")
@@ -2539,7 +2552,7 @@ async def canli_sira_getir(token: str, request: Request):
     stop before this one, plus 2 minutes per stop. It is recomputed from scratch on each
     poll rather than counted down.
     """
-    yolcu_res = supabase.table("talepler").select("*").eq("token", token).execute()
+    yolcu_res = await run_query(supabase.table("talepler").select("*").eq("token", token))
     if not yolcu_res.data: 
         return {"sira": "-"}
     yolcu = yolcu_res.data[0]
@@ -2550,7 +2563,7 @@ async def canli_sira_getir(token: str, request: Request):
     if yolcu["durum"] not in ["KONUM ALINDI", "SERVIS_HAZIR"]: 
         return {"mesaj": "Sıra dışı"}
     
-    arac = supabase.table("araclar").select("*").eq("id", yolcu["arac_id"]).execute().data
+    arac = (await run_query(supabase.table("araclar").select("*").eq("id", yolcu["arac_id"]))).data
     if not arac or not arac[0].get("son_lat"): 
         return {"sira": "-", "mesaj": "Araç henüz yola çıkmadı"}
 
@@ -2559,20 +2572,20 @@ async def canli_sira_getir(token: str, request: Request):
     # The HARITA branch filters by task type itself.
     # Only today's requests, with the same filter as sofor-rotasi: a request left open from an
     # earlier day is not on the driver's route, so it must not shift the customer's queue either.
-    bekleyenler = supabase.table("talepler").select("*").eq("arac_id", yolcu["arac_id"]).in_("durum", ["KONUM ALINDI", "SERVIS_HAZIR"]).gte("kayit_tarihi", tr_bugun_baslangic_utc_iso()).execute().data
+    bekleyenler = (await run_query(supabase.table("talepler").select("*").eq("arac_id", yolcu["arac_id"]).in_("durum", ["KONUM ALINDI", "SERVIS_HAZIR"]).gte("kayit_tarihi", tr_bugun_baslangic_utc_iso()))).data
     # Drop requests without a location, as in sofor-rotasi. One such row would otherwise make
     # the ETA fail for everyone on the vehicle.
     bekleyenler = [b for b in bekleyenler if b.get("konum_lat") is not None and b.get("konum_lng") is not None]
 
-    firma = supabase.table("firmalar").select("merkez_lat, merkez_lng, sistem_modu").eq("id", yolcu.get("firma_id")).execute().data
+    firma = (await run_query(supabase.table("firmalar").select("merkez_lat, merkez_lng, sistem_modu").eq("id", yolcu.get("firma_id")))).data
     s_mod = firma[0].get("sistem_modu", "HARITA") if firma else "HARITA"
     _fm = (firma[0].get("merkez_lat"), firma[0].get("merkez_lng")) if firma else (None, None)
-    merkez_lat, merkez_lng = referans_konum(yolcu.get("firma_id"), arac[0].get("sube_id"), _fm)
+    merkez_lat, merkez_lng = await run_in_threadpool(referans_konum, yolcu.get("firma_id"), arac[0].get("sube_id"), _fm)
     if merkez_lat is None: merkez_lat, merkez_lng = 0.0, 0.0
 
     if s_mod == "DURAK":
         # DURAK mode: the queue is made of stops, so everyone at one stop shares one position.
-        durak_verileri = supabase.table("duraklar").select("id, sira_no").eq("firma_id", yolcu.get("firma_id")).execute().data
+        durak_verileri = (await run_query(supabase.table("duraklar").select("id, sira_no").eq("firma_id", yolcu.get("firma_id")))).data
         durak_dict = {d["id"]: d["sira_no"] for d in durak_verileri}
         
         aktif_duraklar = {}
@@ -2589,7 +2602,7 @@ async def canli_sira_getir(token: str, request: Request):
         # LINE: the same out-and-back order as sofor-rotasi.
         guzergah_tip = None
         if arac[0].get("guzergah_id"):
-            _gz = supabase.table("guzergahlar").select("tip").eq("id", arac[0]["guzergah_id"]).execute().data
+            _gz = (await run_query(supabase.table("guzergahlar").select("tip").eq("id", arac[0]["guzergah_id"]))).data
             if _gz:
                 guzergah_tip = _gz[0].get("tip")
         if guzergah_tip == "LINE":
@@ -2661,7 +2674,7 @@ async def giris_yap(bilgi: LoginIstek, request: Request):
     """
     # Usernames are stored lowercased, so normalise the input the same way.
     arama_kullanici_adi = (bilgi.kullanici_adi or "").strip().lower()
-    res = supabase.table("kullanicilar").select("*").eq("kullanici_adi", arama_kullanici_adi).execute()
+    res = await run_query(supabase.table("kullanicilar").select("*").eq("kullanici_adi", arama_kullanici_adi))
     if not res.data or not sifreyi_dogrula(bilgi.sifre, res.data[0].get("sifre", "")):
         # Log failed attempts so brute force can be spotted. There is no verified actor, so
         # yapan is None and the attempted name goes into the details.
@@ -2683,7 +2696,7 @@ async def giris_yap(bilgi: LoginIstek, request: Request):
     firma_pasif, firma_adi = False, ""
     shuttle_aktif, vale_aktif = True, False
     if k["rol"] != "SUPERADMIN" and k.get("firma_id"):
-        f = supabase.table("firmalar").select("firma_adi, is_active, shuttle_aktif, vale_aktif").eq("id", k["firma_id"]).execute().data
+        f = (await run_query(supabase.table("firmalar").select("firma_adi, is_active, shuttle_aktif, vale_aktif").eq("id", k["firma_id"]))).data
         if f:
             firma_adi = f[0].get("firma_adi", "")
             shuttle_aktif = f[0].get("shuttle_aktif") is not False  # NULL counts as enabled
@@ -2719,14 +2732,14 @@ async def logout(request: Request, credentials: HTTPAuthorizationCredentials = D
     
     try:
         expire_dt = datetime.fromtimestamp(exp, tz=timezone.utc)
-        supabase.table("revoked_tokens").insert({
+        await run_query(supabase.table("revoked_tokens").insert({
             "jti": jti,
             "kullanici_adi": kullanici_adi,
             "sebep": "LOGOUT",
             "iptal_eden": kullanici_adi,
             "iptal_tarihi": datetime.now(timezone.utc).isoformat(),
             "expire_tarihi": expire_dt.isoformat()
-        }).execute()
+        }))
         
         # Mark it revoked in Redis too, so the very next request is rejected.
         try:
@@ -2752,14 +2765,14 @@ async def logout(request: Request, credentials: HTTPAuthorizationCredentials = D
     return {"mesaj": "Çıkış yapıldı."}
 
 @app.get("/firmalar")
-async def firmalari_getir(yetkili = Depends(yetki_kontrol)):
+def firmalari_getir(yetkili = Depends(yetki_kontrol)):
     """SUPERADMIN only: every company row."""
     if yetkili["rol"] != "SUPERADMIN":
         raise HTTPException(status_code=403, detail="Bu listeye erişim yetkiniz yok.")
     return supabase.table("firmalar").select("*").execute().data
 
 @app.get("/firma-admin-rehberi")
-async def firma_admin_rehberi(yetkili = Depends(yetki_kontrol)):
+def firma_admin_rehberi(yetkili = Depends(yetki_kontrol)):
     """SUPERADMIN only: contact list of every company's ADMIN users.
 
     Companies without an admin still get one empty row so they show up in the table.
@@ -2831,7 +2844,7 @@ async def firma_ekle(bilgi: FirmaIstek, request: Request, yetkili = Depends(yetk
     if subeli and not (1 <= max_sube <= 100):
         raise HTTPException(status_code=400, detail="Şubeli firma için azami şube sayısı 1–100 arası olmalı.")
 
-    res = supabase.table("firmalar").insert({
+    res = await run_query(supabase.table("firmalar").insert({
         "firma_adi": temiz_firma_adi,
         "sistem_modu": bilgi.sistem_modu,
         "vale_aktif": bilgi.vale_aktif,
@@ -2845,7 +2858,7 @@ async def firma_ekle(bilgi: FirmaIstek, request: Request, yetkili = Depends(yetk
         "kvkk_basvuru_kanali": temiz_kvkk_basvuru,
         "kvkk_adres": temiz_kvkk_adres,
         "kayit_tarihi": datetime.now(timezone.utc).isoformat()
-    }).execute()
+    }))
     
     yeni_firma = res.data[0]
     
@@ -2910,14 +2923,14 @@ async def kullanici_ekle(bilgi: KullaniciIstek, request: Request, yetkili = Depe
             # not run them.
             if bilgi.rol != "ADMIN":
                 raise HTTPException(status_code=403, detail="Merkez başka şubeye yalnız şube yöneticisi (ADMIN) atayabilir. Şube personelini o şubenin yöneticisi ekler.")
-            s = supabase.table("subeler").select("id").eq("id", bilgi.sube_id).eq("firma_id", bilgi.firma_id).execute().data
+            s = (await run_query(supabase.table("subeler").select("id").eq("id", bilgi.sube_id).eq("firma_id", bilgi.firma_id))).data
             if not s:
                 raise HTTPException(status_code=400, detail="Geçersiz şube veya bu firmaya ait değil.")
             hedef_sube_id = bilgi.sube_id
 
     # Drivers only exist in companies with the shuttle module.
     if bilgi.rol == "SOFOR":
-        _fs = supabase.table("firmalar").select("shuttle_aktif").eq("id", bilgi.firma_id).execute().data
+        _fs = (await run_query(supabase.table("firmalar").select("shuttle_aktif").eq("id", bilgi.firma_id))).data
         if _fs and _fs[0].get("shuttle_aktif") is False:
             raise HTTPException(status_code=400, detail="Bu firmada shuttle hizmeti tanımlı değil; şoför eklenemez.")
 
@@ -2936,7 +2949,7 @@ async def kullanici_ekle(bilgi: KullaniciIstek, request: Request, yetkili = Depe
         elif not yetkili_sube and not hedef_sube_id and yetkili_marka == "Genel" and bilgi.marka and bilgi.marka != "Genel":
             # HQ -> brand is only allowed when the company has no branches. In a company with
             # branches it would let HQ skip the branch level and create a company-wide brand admin.
-            _f = supabase.table("firmalar").select("subeli").eq("id", bilgi.firma_id).execute().data
+            _f = (await run_query(supabase.table("firmalar").select("subeli").eq("id", bilgi.firma_id))).data
             if _f and not _f[0].get("subeli"):
                 kapsam_daraliyor = True  # HQ -> brand (company without branches)
     if not kapsam_daraliyor and not yetki_hiyerarsi_kontrol(yetkili["rol"], bilgi.rol):
@@ -2949,12 +2962,12 @@ async def kullanici_ekle(bilgi: KullaniciIstek, request: Request, yetkili = Depe
     temiz_kullanici_adi = validate_kullanici_adi(bilgi.kullanici_adi)
     
     # Check uniqueness with the normalised (lowercased) name, the same form that is stored.
-    mevcut = supabase.table("kullanicilar").select("kullanici_adi").eq("kullanici_adi", temiz_kullanici_adi).execute()
+    mevcut = await run_query(supabase.table("kullanicilar").select("kullanici_adi").eq("kullanici_adi", temiz_kullanici_adi))
     if mevcut.data:
         raise HTTPException(status_code=400, detail="Bu kullanıcı adı zaten kullanımda. Lütfen başka bir kullanıcı adı seçin.")
     
     if bilgi.email:
-        mevcut_email = supabase.table("kullanicilar").select("kullanici_adi").eq("email", bilgi.email).execute()
+        mevcut_email = await run_query(supabase.table("kullanicilar").select("kullanici_adi").eq("email", bilgi.email))
         if mevcut_email.data:
             raise HTTPException(status_code=400, detail="Bu e-posta adresi zaten kayıtlı.")
     
@@ -2966,16 +2979,16 @@ async def kullanici_ekle(bilgi: KullaniciIstek, request: Request, yetkili = Depe
     # user insert then fails, the except block below deletes it again.
     arac_id_valet = None
     if bilgi.rol == "VALE":
-        f_vale = supabase.table("firmalar").select("vale_aktif, vale_kota").eq("id", bilgi.firma_id).execute().data
+        f_vale = (await run_query(supabase.table("firmalar").select("vale_aktif, vale_kota").eq("id", bilgi.firma_id))).data
         if not f_vale or not f_vale[0].get("vale_aktif"):
             raise HTTPException(status_code=400, detail="Bu firmada vale hizmeti tanımlı değil.")
         # The valet quota counts valet staff and is separate from the vehicle quota.
         vale_kota = f_vale[0].get("vale_kota") or 0
-        mevcut_vale = len(supabase.table("kullanicilar").select("kullanici_adi").eq("firma_id", bilgi.firma_id).eq("rol", "VALE").execute().data)
+        mevcut_vale = len((await run_query(supabase.table("kullanicilar").select("kullanici_adi").eq("firma_id", bilgi.firma_id).eq("rol", "VALE"))).data)
         if mevcut_vale >= vale_kota:
             raise HTTPException(status_code=400, detail=f"Vale kotanız dolu ({mevcut_vale}/{vale_kota}). Kota artışı için Shuttle & Valet Ops ekibiyle iletişime geçin.")
         arac_id_valet = str(uuid.uuid4())
-        supabase.table("araclar").insert({
+        await run_query(supabase.table("araclar").insert({
             "id": arac_id_valet,
             # For a valet the plate field holds the username. No "Vale" prefix: the panels
             # already list these under valet headings.
@@ -2985,11 +2998,11 @@ async def kullanici_ekle(bilgi: KullaniciIstek, request: Request, yetkili = Depe
             "sube_id": hedef_sube_id,
             "tip": "VALE",
             "kayit_tarihi": datetime.now(timezone.utc).isoformat()
-        }).execute()
+        }))
 
     # davet_token_olusturma records when the invitation was issued, for its expiry check.
     try:
-        supabase.table("kullanicilar").insert({
+        await run_query(supabase.table("kullanicilar").insert({
             "kullanici_adi": temiz_kullanici_adi,
             # Optional here. The person enters their own display name when setting a password
             # (required there); an admin may fill it in up front.
@@ -3004,11 +3017,11 @@ async def kullanici_ekle(bilgi: KullaniciIstek, request: Request, yetkili = Depe
             "telefon": bilgi.telefon,
             "kayit_tarihi": datetime.now(timezone.utc).isoformat(),
             "arac_id": arac_id_valet
-        }).execute()
+        }))
     except Exception:
         # Do not leave an orphaned virtual vehicle behind.
         if arac_id_valet:
-            supabase.table("araclar").delete().eq("id", arac_id_valet).execute()
+            await run_query(supabase.table("araclar").delete().eq("id", arac_id_valet))
         raise
     if arac_id_valet:
         await manager.broadcast_firma(bilgi.firma_id, "YENILE")
@@ -3038,15 +3051,15 @@ async def sofor_arac_ata(istek: AracAtaIstek, request: Request, yetkili = Depend
         raise HTTPException(status_code=403)
 
     if yetkili["rol"] != "SUPERADMIN":
-        k1 = supabase.table("kullanicilar").select("firma_id").eq("kullanici_adi", istek.kullanici_adi).execute()
+        k1 = await run_query(supabase.table("kullanicilar").select("firma_id").eq("kullanici_adi", istek.kullanici_adi))
         if not k1.data or k1.data[0].get("firma_id") != yetkili.get("firma_id"): 
             raise HTTPException(status_code=403)
-        k2 = supabase.table("araclar").select("firma_id").eq("id", istek.yeni_arac_id).execute()
+        k2 = await run_query(supabase.table("araclar").select("firma_id").eq("id", istek.yeni_arac_id))
         if not k2.data or k2.data[0].get("firma_id") != yetkili.get("firma_id"): 
             raise HTTPException(status_code=403)
     
     # One driver per vehicle.
-    mevcut_sofor = supabase.table("kullanicilar").select("kullanici_adi").eq("arac_id", istek.yeni_arac_id).eq("rol", "SOFOR").neq("kullanici_adi", istek.kullanici_adi).execute()
+    mevcut_sofor = await run_query(supabase.table("kullanicilar").select("kullanici_adi").eq("arac_id", istek.yeni_arac_id).eq("rol", "SOFOR").neq("kullanici_adi", istek.kullanici_adi))
     if mevcut_sofor.data:
         baska_sofor = mevcut_sofor.data[0].get("kullanici_adi", "bilinmeyen")
         raise HTTPException(
@@ -3060,12 +3073,12 @@ async def sofor_arac_ata(istek: AracAtaIstek, request: Request, yetkili = Depend
     #   - moving a driver from vehicle X to Y frees X and fills Y, net zero, so swapping to a
     #     spare vehicle after a breakdown always works;
     #   - giving a vehicle to another driver adds one and is refused if over quota.
-    arac_y = supabase.table("araclar").select("sube_id, firma_id").eq("id", istek.yeni_arac_id).execute().data
+    arac_y = (await run_query(supabase.table("araclar").select("sube_id, firma_id").eq("id", istek.yeni_arac_id))).data
     if arac_y:
         y_sube = arac_y[0].get("sube_id")
         y_firma = arac_y[0].get("firma_id")
-        aktif_kota, kapsam_arac_ids = kapsam_kota_bilgisi(y_firma, y_sube)
-        soforlar = supabase.table("kullanicilar").select("kullanici_adi, arac_id").eq("firma_id", y_firma).eq("rol", "SOFOR").execute().data
+        aktif_kota, kapsam_arac_ids = await run_in_threadpool(kapsam_kota_bilgisi, y_firma, y_sube)
+        soforlar = (await run_query(supabase.table("kullanicilar").select("kullanici_adi, arac_id").eq("firma_id", y_firma).eq("rol", "SOFOR"))).data
         aktif_araclar = set()
         for s in soforlar:
             aid = istek.yeni_arac_id if s.get("kullanici_adi") == istek.kullanici_adi else s.get("arac_id")
@@ -3079,19 +3092,19 @@ async def sofor_arac_ata(istek: AracAtaIstek, request: Request, yetkili = Depend
                 kota_mesaji = f"Aktif araç kotası dolu ({aktif_kota}). Önce bir şoförün atamasını kaldırın ya da kota artışı için Shuttle & Valet Ops ekibiyle iletişime geçin."
             raise HTTPException(status_code=400, detail=kota_mesaji)
 
-    if not supabase.table("kullanicilar").update({"arac_id": istek.yeni_arac_id}).eq("kullanici_adi", istek.kullanici_adi).execute().data: 
+    if not (await run_query(supabase.table("kullanicilar").update({"arac_id": istek.yeni_arac_id}).eq("kullanici_adi", istek.kullanici_adi))).data: 
         raise HTTPException(status_code=404)
     
     # A SUPERADMIN token has no company, so look it up from the vehicle.
     if yetkili["rol"] != "SUPERADMIN":
         firma_id_hedef = yetkili.get("firma_id")
     else:
-        _arac_firma = supabase.table("araclar").select("firma_id").eq("id", istek.yeni_arac_id).execute().data
+        _arac_firma = (await run_query(supabase.table("araclar").select("firma_id").eq("id", istek.yeni_arac_id))).data
         firma_id_hedef = _arac_firma[0]["firma_id"] if _arac_firma else None
     if firma_id_hedef:
         await manager.broadcast_firma(firma_id_hedef, "YENILE")
     
-    arac_bilgi = supabase.table("araclar").select("plaka").eq("id", istek.yeni_arac_id).execute().data
+    arac_bilgi = (await run_query(supabase.table("araclar").select("plaka").eq("id", istek.yeni_arac_id))).data
     plaka_log = arac_bilgi[0].get("plaka", "bilinmeyen") if arac_bilgi else "bilinmeyen"
     
     await audit_log_yaz(
@@ -3111,7 +3124,7 @@ async def sofor_arac_ata(istek: AracAtaIstek, request: Request, yetkili = Depend
     return {"mesaj": "Atandı."}
 
 @app.get("/sofor-durumu")
-async def sofor_durumu(yetkili = Depends(yetki_kontrol)):
+def sofor_durumu(yetkili = Depends(yetki_kontrol)):
     """Driver app on start-up: current vehicle, whether a trip is running, plate and base point.
 
     The base point (branch, else HQ) is used for the "return to base" navigation button.
@@ -3148,7 +3161,7 @@ def _gecerli_uuid(deger) -> bool:
         return False
 
 @app.get("/firma-talepleri")
-async def firma_talepleri(firma_id: str, marka: str = None, yetkili = Depends(yetki_kontrol)):
+def firma_talepleri(firma_id: str, marka: str = None, yetkili = Depends(yetki_kontrol)):
     """Panels: the company's requests for today's view, enriched with plate, stop and milestones.
 
     Includes requests opened today, plus two kinds marked devreden ("carried over"): active
@@ -3246,7 +3259,7 @@ async def firma_talepleri(firma_id: str, marka: str = None, yetkili = Depends(ye
     return talepler
 
 @app.get("/firma-araclari")
-async def firma_araclari(firma_id: str, marka: str = None, yetkili = Depends(yetki_kontrol)):
+def firma_araclari(firma_id: str, marka: str = None, yetkili = Depends(yetki_kontrol)):
     """Panels: the company's vehicles (shuttle vehicles and valets) with driver and route names."""
     if yetkili["rol"] != "SUPERADMIN" and yetkili.get("firma_id") != firma_id: raise HTTPException(status_code=403)
     if not _gecerli_uuid(firma_id): return []
@@ -3285,7 +3298,7 @@ async def firma_araclari(firma_id: str, marka: str = None, yetkili = Depends(yet
     return [a for a in araclar if (a.get("marka") or "Genel") in [marka, "Genel"]] if marka and marka != "Genel" else araclar
 
 @app.get("/firma-rapor")
-async def firma_rapor(firma_id: str, periyot: str = "gunluk", yetkili = Depends(yetki_kontrol)):
+def firma_rapor(firma_id: str, periyot: str = "gunluk", yetkili = Depends(yetki_kontrol)):
     """Panels: company-wide shuttle totals for a day, week or 30 days."""
     if yetkili["rol"] != "SUPERADMIN" and yetkili.get("firma_id") != firma_id:
         raise HTTPException(status_code=403, detail="Yetkisiz erişim.")
@@ -3310,7 +3323,7 @@ async def firma_rapor(firma_id: str, periyot: str = "gunluk", yetkili = Depends(
     }
 
 @app.get("/arac-rapor")
-async def arac_rapor(firma_id: str, periyot: str = "gunluk", yetkili = Depends(yetki_kontrol)):
+def arac_rapor(firma_id: str, periyot: str = "gunluk", yetkili = Depends(yetki_kontrol)):
     """Panels: per-vehicle report. Shuttle vehicles and valets get different columns.
 
     Uses a fixed number of queries (vehicles, requests, milestones, drivers) and joins
@@ -3436,7 +3449,7 @@ DAKIKLIK_ASGARI_ORNEK = 5          # below this many samples, no "consistently l
 
 
 @app.get("/dakiklik-raporu")
-async def dakiklik_raporu(firma_id: str, periyot: str = "aylik", yetkili = Depends(yetki_kontrol)):
+def dakiklik_raporu(firma_id: str, periyot: str = "aylik", yetkili = Depends(yetki_kontrol)):
     """Per-valet punctuality: average deviation, on-time rate and data-quality flags.
 
     ADMIN and SUPERADMIN only. This is a staff performance report; advisors create tasks
@@ -3575,7 +3588,7 @@ async def dakiklik_raporu(firma_id: str, periyot: str = "aylik", yetkili = Depen
 
 
 @app.get("/memnuniyet-raporu")
-async def memnuniyet_raporu(firma_id: str, periyot: str = "aylik", yetkili = Depends(yetki_kontrol)):
+def memnuniyet_raporu(firma_id: str, periyot: str = "aylik", yetkili = Depends(yetki_kontrol)):
     """Satisfaction survey report: per-question averages, per-valet breakdown and comments.
 
     ADMIN and SUPERADMIN only, for the same reason as the punctuality report; free-text
@@ -3658,14 +3671,14 @@ async def memnuniyet_raporu(firma_id: str, periyot: str = "aylik", yetkili = Dep
 
 
 @app.get("/firma-detay/{firma_id}")
-async def firma_detay(firma_id: str, yetkili = Depends(yetki_kontrol)):
+def firma_detay(firma_id: str, yetkili = Depends(yetki_kontrol)):
     """Panels: company name, HQ location, operating mode and module flags."""
     if yetkili["rol"] != "SUPERADMIN" and yetkili.get("firma_id") != firma_id: raise HTTPException(status_code=403)
     res = supabase.table("firmalar").select("firma_adi, merkez_lat, merkez_lng, sistem_modu, vale_aktif, shuttle_aktif, vale_kota").eq("id", firma_id).execute()
     return res.data[0] if res.data else {"firma_adi": "Sistem"}
 
 @app.get("/firma-personelleri/{firma_id}")
-async def personel_getir(firma_id: str, yetkili: dict = Depends(yetki_kontrol)):
+def personel_getir(firma_id: str, yetkili: dict = Depends(yetki_kontrol)):
     """Panels: the company's staff, with the plate of each person's assigned vehicle."""
     if yetkili["rol"] != "SUPERADMIN" and yetkili.get("firma_id") != firma_id:
         raise HTTPException(status_code=403)
@@ -3699,7 +3712,7 @@ async def personel_sil(kullanici_adi: str, request: Request, yetkili = Depends(y
     if kullanici_adi == yetkili.get("kullanici_adi"):
         raise HTTPException(status_code=400, detail="Kendi yöneticilik hesabınızı silemezsiniz.")
 
-    hedef_res = supabase.table("kullanicilar").select("firma_id, rol, sube_id, arac_id").eq("kullanici_adi", kullanici_adi).execute()
+    hedef_res = await run_query(supabase.table("kullanicilar").select("firma_id, rol, sube_id, arac_id").eq("kullanici_adi", kullanici_adi))
     if not hedef_res.data:
         raise HTTPException(status_code=404, detail="Personel bulunamadı.")
     hedef = hedef_res.data[0]
@@ -3722,8 +3735,8 @@ async def personel_sil(kullanici_adi: str, request: Request, yetkili = Depends(y
     # A valet with an active task cannot be deleted; the task and its customer would be
     # left hanging.
     if hedef.get("rol") == "VALE" and hedef.get("arac_id"):
-        aktif_vale_gorev = supabase.table("talepler").select("id").eq("arac_id", hedef["arac_id"]).in_(
-            "durum", VALE_AKTIF_DURUMLAR).execute().data
+        aktif_vale_gorev = (await run_query(supabase.table("talepler").select("id").eq("arac_id", hedef["arac_id"]).in_(
+            "durum", VALE_AKTIF_DURUMLAR))).data
         if aktif_vale_gorev:
             raise HTTPException(status_code=409, detail="Bu valenin devam eden görevi var. Önce görev tamamlanmalı.")
 
@@ -3736,7 +3749,7 @@ async def personel_sil(kullanici_adi: str, request: Request, yetkili = Depends(y
         iptal_eden=yetkili.get("kullanici_adi")
     )
 
-    supabase.table("kullanicilar").delete().eq("kullanici_adi", kullanici_adi).execute()
+    await run_query(supabase.table("kullanicilar").delete().eq("kullanici_adi", kullanici_adi))
 
     # Delete the valet's virtual vehicle, but only if it has no history. talepler.arac_id has a
     # foreign key to araclar.id, so deleting a vehicle that tasks point to fails with a 23503
@@ -3745,9 +3758,9 @@ async def personel_sil(kullanici_adi: str, request: Request, yetkili = Depends(y
     # and reports keep showing it. Any code that deletes from araclar must handle this FK,
     # either by deleting the tasks first or by refusing with a clear 400.
     if hedef.get("rol") == "VALE" and hedef.get("arac_id"):
-        gecmis = supabase.table("talepler").select("id").eq("arac_id", hedef["arac_id"]).limit(1).execute().data
+        gecmis = (await run_query(supabase.table("talepler").select("id").eq("arac_id", hedef["arac_id"]).limit(1))).data
         if not gecmis:
-            supabase.table("araclar").delete().eq("id", hedef["arac_id"]).execute()
+            await run_query(supabase.table("araclar").delete().eq("id", hedef["arac_id"]))
         await manager.broadcast_firma(hedef.get("firma_id", ""), "YENILE")
 
     await audit_log_yaz(
@@ -3781,14 +3794,14 @@ async def sube_ekle(bilgi: SubeIstek, request: Request, yetkili = Depends(yetki_
     if not re.match(r"^[a-zA-Z0-9ğüşıöçĞÜŞİÖÇ\s\-_.,&/]+$", sube_adi):
         raise HTTPException(status_code=400, detail="Şube adı sadece harf, rakam ve temel noktalama içerebilir.")
 
-    firma_res = supabase.table("firmalar").select("subeli, max_sube, toplam_kota").eq("id", bilgi.firma_id).execute().data
+    firma_res = (await run_query(supabase.table("firmalar").select("subeli, max_sube, toplam_kota").eq("id", bilgi.firma_id))).data
     if not firma_res:
         raise HTTPException(status_code=404, detail="Firma bulunamadı.")
     firma = firma_res[0]
     if not firma.get("subeli"):
         raise HTTPException(status_code=400, detail="Bu firma şubeli değil; önce firmayı şubeli yapın.")
 
-    mevcut = supabase.table("subeler").select("id, aktif_kota").eq("firma_id", bilgi.firma_id).execute().data
+    mevcut = (await run_query(supabase.table("subeler").select("id, aktif_kota").eq("firma_id", bilgi.firma_id))).data
     if len(mevcut) >= (firma.get("max_sube") or 0):
         raise HTTPException(status_code=400, detail=f"Azami şube sayısına ulaşıldı ({firma.get('max_sube') or 0}). Daha fazlası için kota/fiyat artışı gerekir.")
     # The branch quotas together may not exceed the company's total vehicle quota.
@@ -3798,9 +3811,9 @@ async def sube_ekle(bilgi: SubeIstek, request: Request, yetkili = Depends(yetki_
     if mevcut_toplam + aktif_kota > toplam_kota:
         raise HTTPException(status_code=400, detail=f"Toplam araç kotası aşıldı (toplam {toplam_kota}, kalan {toplam_kota - mevcut_toplam}).")
 
-    res = supabase.table("subeler").insert({
+    res = await run_query(supabase.table("subeler").insert({
         "firma_id": bilgi.firma_id, "sube_adi": sube_adi, "aktif_kota": aktif_kota, "aktif": True
-    }).execute()
+    }))
     yeni_sube = res.data[0] if res.data else None
 
     await audit_log_yaz(
@@ -3815,7 +3828,7 @@ async def sube_ekle(bilgi: SubeIstek, request: Request, yetkili = Depends(yetki_
 
 
 @app.get("/sube-listele/{firma_id}")
-async def sube_listele(firma_id: str, yetkili = Depends(yetki_kontrol)):
+def sube_listele(firma_id: str, yetkili = Depends(yetki_kontrol)):
     """Admins only: the company's branches with quota totals (handed out and remaining)."""
     if yetkili["rol"] not in ["SUPERADMIN", "ADMIN"]:
         raise HTTPException(status_code=403, detail="Yetkisiz.")
@@ -3846,7 +3859,7 @@ async def sube_guncelle(bilgi: SubeGuncelleIstek, request: Request, yetkili = De
         raise HTTPException(status_code=403, detail="Şube güncelleme yetkiniz yok.")
     if yetkili["rol"] != "SUPERADMIN" and yetkili.get("sube_id"):
         raise HTTPException(status_code=403, detail="Şube yönetimi yalnız merkez yöneticisinindir.")
-    sube_res = supabase.table("subeler").select("*").eq("id", bilgi.sube_id).execute().data
+    sube_res = (await run_query(supabase.table("subeler").select("*").eq("id", bilgi.sube_id))).data
     if not sube_res:
         raise HTTPException(status_code=404, detail="Şube bulunamadı.")
     sube = sube_res[0]
@@ -3865,9 +3878,9 @@ async def sube_guncelle(bilgi: SubeGuncelleIstek, request: Request, yetkili = De
     if bilgi.aktif_kota is not None:
         yeni_kota = max(0, bilgi.aktif_kota)
         # Other branches' quotas plus the new value may not exceed the company total.
-        firma_res = supabase.table("firmalar").select("toplam_kota").eq("id", firma_id).execute().data
+        firma_res = (await run_query(supabase.table("firmalar").select("toplam_kota").eq("id", firma_id))).data
         toplam_kota = (firma_res[0].get("toplam_kota") or 0) if firma_res else 0
-        digerleri = supabase.table("subeler").select("aktif_kota").eq("firma_id", firma_id).neq("id", bilgi.sube_id).execute().data
+        digerleri = (await run_query(supabase.table("subeler").select("aktif_kota").eq("firma_id", firma_id).neq("id", bilgi.sube_id))).data
         diger_toplam = sum((s.get("aktif_kota") or 0) for s in digerleri)
         if diger_toplam + yeni_kota > toplam_kota:
             raise HTTPException(status_code=400, detail=f"Toplam kota aşıldı (toplam {toplam_kota}, diğer şubeler {diger_toplam}, bu şubeye en fazla {toplam_kota - diger_toplam}).")
@@ -3876,7 +3889,7 @@ async def sube_guncelle(bilgi: SubeGuncelleIstek, request: Request, yetkili = De
     if not guncelleme:
         raise HTTPException(status_code=400, detail="Güncellenecek alan yok.")
 
-    supabase.table("subeler").update(guncelleme).eq("id", bilgi.sube_id).execute()
+    await run_query(supabase.table("subeler").update(guncelleme).eq("id", bilgi.sube_id))
     await audit_log_yaz(
         yapan=yetkili, eylem="SUBE_GUNCELLE", hedef_tip="SUBE",
         hedef_id=bilgi.sube_id, hedef_aciklama=f"şube güncellendi: {sube.get('sube_adi')}",
@@ -3893,7 +3906,7 @@ async def sube_sil(sube_id: str, request: Request, yetkili = Depends(yetki_kontr
         raise HTTPException(status_code=403, detail="Şube silme yetkiniz yok.")
     if yetkili["rol"] != "SUPERADMIN" and yetkili.get("sube_id"):
         raise HTTPException(status_code=403, detail="Şube yönetimi yalnız merkez yöneticisinindir.")
-    sube_res = supabase.table("subeler").select("*").eq("id", sube_id).execute().data
+    sube_res = (await run_query(supabase.table("subeler").select("*").eq("id", sube_id))).data
     if not sube_res:
         raise HTTPException(status_code=404, detail="Şube bulunamadı.")
     sube = sube_res[0]
@@ -3903,9 +3916,9 @@ async def sube_sil(sube_id: str, request: Request, yetkili = Depends(yetki_kontr
     # Refuse while anything still belongs to the branch. The check selects sube_id because
     # every table has that column (kullanicilar has no id column).
     for tablo in ("kullanicilar", "araclar", "guzergahlar", "talepler", "markalar"):
-        if supabase.table(tablo).select("sube_id").eq("sube_id", sube_id).limit(1).execute().data:
+        if (await run_query(supabase.table(tablo).select("sube_id").eq("sube_id", sube_id).limit(1))).data:
             raise HTTPException(status_code=400, detail=f"Şubeye bağlı {tablo} kaydı var; önce onları başka şubeye taşıyın veya silin.")
-    supabase.table("subeler").delete().eq("id", sube_id).execute()
+    await run_query(supabase.table("subeler").delete().eq("id", sube_id))
     await audit_log_yaz(
         yapan=yetkili, eylem="SUBE_SIL", hedef_tip="SUBE",
         hedef_id=sube_id, hedef_aciklama=f"şube silindi: {sube.get('sube_adi')}",
@@ -3924,7 +3937,7 @@ async def firma_kota_guncelle(bilgi: FirmaKotaIstek, request: Request, yetkili =
     """
     if yetkili["rol"] != "SUPERADMIN":
         raise HTTPException(status_code=403, detail="Yetkisiz.")
-    firma_res = supabase.table("firmalar").select("subeli, max_sube, toplam_kota").eq("id", bilgi.firma_id).execute().data
+    firma_res = (await run_query(supabase.table("firmalar").select("subeli, max_sube, toplam_kota").eq("id", bilgi.firma_id))).data
     if not firma_res:
         raise HTTPException(status_code=404, detail="Firma bulunamadı.")
 
@@ -3932,21 +3945,21 @@ async def firma_kota_guncelle(bilgi: FirmaKotaIstek, request: Request, yetkili =
     if bilgi.max_sube is not None:
         if not (0 <= bilgi.max_sube <= 100):
             raise HTTPException(status_code=400, detail="Azami şube 0–100 arası olmalı.")
-        mevcut_sube = len(supabase.table("subeler").select("id").eq("firma_id", bilgi.firma_id).execute().data)
+        mevcut_sube = len((await run_query(supabase.table("subeler").select("id").eq("firma_id", bilgi.firma_id))).data)
         if bilgi.max_sube < mevcut_sube:
             raise HTTPException(status_code=400, detail=f"Azami şube ({bilgi.max_sube}), mevcut şube sayısından ({mevcut_sube}) az olamaz; önce şube silin.")
         guncelleme["max_sube"] = bilgi.max_sube
     if bilgi.toplam_kota is not None:
         if not (1 <= bilgi.toplam_kota <= 1000):
             raise HTTPException(status_code=400, detail="Toplam kota 1–1000 arası olmalı.")
-        dagitilmis = sum((s.get("aktif_kota") or 0) for s in supabase.table("subeler").select("aktif_kota").eq("firma_id", bilgi.firma_id).execute().data)
+        dagitilmis = sum((s.get("aktif_kota") or 0) for s in (await run_query(supabase.table("subeler").select("aktif_kota").eq("firma_id", bilgi.firma_id))).data)
         if bilgi.toplam_kota < dagitilmis:
             raise HTTPException(status_code=400, detail=f"Toplam kota ({bilgi.toplam_kota}), şubelere dağıtılmış kotadan ({dagitilmis}) az olamaz; önce şube kotalarını düşürün.")
         guncelleme["toplam_kota"] = bilgi.toplam_kota
     if bilgi.vale_kota is not None:
         if not (0 <= bilgi.vale_kota <= 500):
             raise HTTPException(status_code=400, detail="Vale kotası 0–500 arası olmalı.")
-        mevcut_vale = len(supabase.table("kullanicilar").select("kullanici_adi").eq("firma_id", bilgi.firma_id).eq("rol", "VALE").execute().data)
+        mevcut_vale = len((await run_query(supabase.table("kullanicilar").select("kullanici_adi").eq("firma_id", bilgi.firma_id).eq("rol", "VALE"))).data)
         if bilgi.vale_kota < mevcut_vale:
             raise HTTPException(status_code=400, detail=f"Vale kotası ({bilgi.vale_kota}), kayıtlı vale sayısından ({mevcut_vale}) az olamaz; önce vale silin.")
         guncelleme["vale_kota"] = bilgi.vale_kota
@@ -3954,7 +3967,7 @@ async def firma_kota_guncelle(bilgi: FirmaKotaIstek, request: Request, yetkili =
     if not guncelleme:
         raise HTTPException(status_code=400, detail="Güncellenecek alan yok.")
 
-    supabase.table("firmalar").update(guncelleme).eq("id", bilgi.firma_id).execute()
+    await run_query(supabase.table("firmalar").update(guncelleme).eq("id", bilgi.firma_id))
     await audit_log_yaz(
         yapan=yetkili, eylem="FIRMA_KOTA_GUNCELLE", hedef_tip="FIRMA",
         hedef_id=bilgi.firma_id, hedef_aciklama="firma kotası güncellendi",
@@ -3975,7 +3988,7 @@ async def firma_subeli_yap(bilgi: SubeliYapIstek, request: Request, yetkili = De
     if yetkili["rol"] != "SUPERADMIN":
         raise HTTPException(status_code=403, detail="Yetkisiz.")
 
-    firma_res = supabase.table("firmalar").select("firma_adi, subeli").eq("id", bilgi.firma_id).execute().data
+    firma_res = (await run_query(supabase.table("firmalar").select("firma_adi, subeli").eq("id", bilgi.firma_id))).data
     if not firma_res:
         raise HTTPException(status_code=404, detail="Firma bulunamadı.")
     if firma_res[0].get("subeli"):
@@ -3983,7 +3996,7 @@ async def firma_subeli_yap(bilgi: SubeliYapIstek, request: Request, yetkili = De
     if not (1 <= bilgi.max_sube <= 100):
         raise HTTPException(status_code=400, detail="Azami şube sayısı 1–100 arası olmalı.")
 
-    supabase.table("firmalar").update({"subeli": True, "max_sube": bilgi.max_sube}).eq("id", bilgi.firma_id).execute()
+    await run_query(supabase.table("firmalar").update({"subeli": True, "max_sube": bilgi.max_sube}).eq("id", bilgi.firma_id))
     await audit_log_yaz(
         yapan=yetkili, eylem="FIRMA_SUBELI_YAP", hedef_tip="FIRMA",
         hedef_id=bilgi.firma_id,
@@ -3996,7 +4009,7 @@ async def firma_subeli_yap(bilgi: SubeliYapIstek, request: Request, yetkili = De
 
 
 @app.get("/firma-markalari")
-async def firma_markalari_getir(firma_id: str, yetkili = Depends(yetki_kontrol)):
+def firma_markalari_getir(firma_id: str, yetkili = Depends(yetki_kontrol)):
     """The company's brands (marka), also called departments in the UI, within the caller's branch scope."""
     if yetkili["rol"] != "SUPERADMIN" and yetkili.get("firma_id") != firma_id:
         raise HTTPException(status_code=403, detail="Bu firmaya yetkiniz yok.")
@@ -4021,17 +4034,17 @@ async def marka_ekle(bilgi: MarkaIstek, request: Request, yetkili = Depends(yetk
     if yetkili["rol"] != "SUPERADMIN" and bilgi.firma_id != yetkili.get("firma_id"):
         raise HTTPException(status_code=403, detail="Bu firmaya yetkiniz yok.")
 
-    hedef_sube_id = hedef_sube_belirle(yetkili, bilgi.firma_id, bilgi.sube_id)
+    hedef_sube_id = await run_in_threadpool(hedef_sube_belirle, yetkili, bilgi.firma_id, bilgi.sube_id)
     # Case-insensitive uniqueness within the branch; NULL (HQ) is compared as its own scope.
-    for m in supabase.table("markalar").select("marka_adi, sube_id").eq("firma_id", bilgi.firma_id).execute().data:
+    for m in (await run_query(supabase.table("markalar").select("marka_adi, sube_id").eq("firma_id", bilgi.firma_id))).data:
         if (m.get("sube_id") or None) == hedef_sube_id and (m.get("marka_adi") or "").strip().lower() == marka_adi.lower():
             raise HTTPException(status_code=400, detail="Bu şubede bu isimde bir bölüm/marka zaten var.")
 
-    supabase.table("markalar").insert({
+    await run_query(supabase.table("markalar").insert({
         "firma_id": bilgi.firma_id,
         "marka_adi": marka_adi,  # no escaping needed: the pattern above allows no markup characters
         "sube_id": hedef_sube_id
-    }).execute()
+    }))
     
     await audit_log_yaz(
         yapan=yetkili,
@@ -4055,7 +4068,7 @@ async def marka_sil(marka_id: str, request: Request, yetkili = Depends(yetki_kon
     if yetkili["rol"] not in ["SUPERADMIN", "ADMIN"]:
         raise HTTPException(status_code=403, detail="Bölüm/marka silme yetkiniz yok.")
 
-    m = supabase.table("markalar").select("id, firma_id, marka_adi, sube_id").eq("id", marka_id).execute().data
+    m = (await run_query(supabase.table("markalar").select("id, firma_id, marka_adi, sube_id").eq("id", marka_id))).data
     if not m:
         raise HTTPException(status_code=404, detail="Bölüm/marka bulunamadı.")
     marka = m[0]
@@ -4072,12 +4085,12 @@ async def marka_sil(marka_id: str, request: Request, yetkili = Depends(yetki_kon
     # another branch, so match on sube_id as well.
     def _kapsamda(kayitlar):
         return [k for k in kayitlar if (k.get("sube_id") or None) == marka_sube]
-    bagli_kullanici = _kapsamda(supabase.table("kullanicilar").select("kullanici_adi, sube_id").eq("firma_id", firma_id).eq("marka", marka_adi).execute().data)
-    bagli_arac = _kapsamda(supabase.table("araclar").select("id, sube_id").eq("firma_id", firma_id).eq("marka", marka_adi).execute().data)
+    bagli_kullanici = _kapsamda((await run_query(supabase.table("kullanicilar").select("kullanici_adi, sube_id").eq("firma_id", firma_id).eq("marka", marka_adi))).data)
+    bagli_arac = _kapsamda((await run_query(supabase.table("araclar").select("id, sube_id").eq("firma_id", firma_id).eq("marka", marka_adi))).data)
     if bagli_kullanici or bagli_arac:
         raise HTTPException(status_code=400, detail=f"Bu bölüme bağlı {len(bagli_kullanici)} kullanıcı ve {len(bagli_arac)} araç var. Önce onları başka bir bölüme taşıyın veya silin.")
 
-    supabase.table("markalar").delete().eq("id", marka_id).execute()
+    await run_query(supabase.table("markalar").delete().eq("id", marka_id))
 
     await audit_log_yaz(
         yapan=yetkili,
@@ -4100,14 +4113,14 @@ async def firma_vale_guncelle(bilgi: AktiflikIstek, request: Request, yetkili = 
     """
     if yetkili["rol"] != "SUPERADMIN": raise HTTPException(status_code=403)
 
-    firma = supabase.table("firmalar").select("firma_adi, vale_aktif").eq("id", bilgi.firma_id).execute().data
+    firma = (await run_query(supabase.table("firmalar").select("firma_adi, vale_aktif").eq("id", bilgi.firma_id))).data
     if not firma:
         raise HTTPException(status_code=404, detail="Firma bulunamadı.")
     firma_adi_log = firma[0].get("firma_adi", "bilinmeyen")
 
     # Switching on only sets the flag.
     if bilgi.durum:
-        supabase.table("firmalar").update({"vale_aktif": True}).eq("id", bilgi.firma_id).execute()
+        await run_query(supabase.table("firmalar").update({"vale_aktif": True}).eq("id", bilgi.firma_id))
         await audit_log_yaz(
             yapan=yetkili, eylem="VALE_MODUL_AC", hedef_tip="FIRMA", hedef_id=bilgi.firma_id,
             hedef_aciklama=f"vale modülü açıldı: {firma_adi_log}",
@@ -4115,7 +4128,7 @@ async def firma_vale_guncelle(bilgi: AktiflikIstek, request: Request, yetkili = 
         await manager.broadcast_firma(bilgi.firma_id, "YENILE")
         return {"mesaj": "Vale hizmeti açıldı."}
 
-    vale_kullanicilar = supabase.table("kullanicilar").select("kullanici_adi").eq("firma_id", bilgi.firma_id).eq("rol", "VALE").execute().data
+    vale_kullanicilar = (await run_query(supabase.table("kullanicilar").select("kullanici_adi").eq("firma_id", bilgi.firma_id).eq("rol", "VALE"))).data
 
     # Revoke the valets' tokens first so they are logged out at once instead of keeping
     # access for the rest of the token lifetime.
@@ -4133,19 +4146,19 @@ async def firma_vale_guncelle(bilgi: AktiflikIstek, request: Request, yetkili = 
         sentry_sdk.capture_exception(e)  # carry on deleting even if revocation failed
 
     # Valet tasks, active ones included; their customer links will return 404, on purpose.
-    silinen_talepler = supabase.table("talepler").delete().eq("firma_id", bilgi.firma_id).in_(
-        "gorev_tipi", ["VALE_ALIM", "VALE_TESLIM"]).execute().data or []
+    silinen_talepler = (await run_query(supabase.table("talepler").delete().eq("firma_id", bilgi.firma_id).in_(
+        "gorev_tipi", ["VALE_ALIM", "VALE_TESLIM"]))).data or []
 
-    supabase.table("kullanicilar").delete().eq("firma_id", bilgi.firma_id).eq("rol", "VALE").execute()
+    await run_query(supabase.table("kullanicilar").delete().eq("firma_id", bilgi.firma_id).eq("rol", "VALE"))
 
     # Virtual valet vehicles. arac_saat_sablonlari references araclar, so it goes first.
-    vale_araclar = supabase.table("araclar").select("id").eq("firma_id", bilgi.firma_id).eq("tip", "VALE").execute().data
+    vale_araclar = (await run_query(supabase.table("araclar").select("id").eq("firma_id", bilgi.firma_id).eq("tip", "VALE"))).data
     vale_arac_ids = [a["id"] for a in vale_araclar]
     if vale_arac_ids:
-        supabase.table("arac_saat_sablonlari").delete().in_("arac_id", vale_arac_ids).execute()
-        supabase.table("araclar").delete().in_("id", vale_arac_ids).execute()
+        await run_query(supabase.table("arac_saat_sablonlari").delete().in_("arac_id", vale_arac_ids))
+        await run_query(supabase.table("araclar").delete().in_("id", vale_arac_ids))
 
-    supabase.table("firmalar").update({"vale_aktif": False}).eq("id", bilgi.firma_id).execute()
+    await run_query(supabase.table("firmalar").update({"vale_aktif": False}).eq("id", bilgi.firma_id))
     await audit_log_yaz(
         yapan=yetkili, eylem="VALE_MODUL_KAPAT", hedef_tip="FIRMA", hedef_id=bilgi.firma_id,
         hedef_aciklama=f"vale modülü kapatıldı (cascade): {firma_adi_log}",
@@ -4168,7 +4181,7 @@ async def firma_shuttle_guncelle(bilgi: ShuttleGuncelleIstek, request: Request, 
     """
     if yetkili["rol"] != "SUPERADMIN": raise HTTPException(status_code=403)
 
-    firma = supabase.table("firmalar").select("firma_adi, shuttle_aktif, vale_aktif").eq("id", bilgi.firma_id).execute().data
+    firma = (await run_query(supabase.table("firmalar").select("firma_adi, shuttle_aktif, vale_aktif").eq("id", bilgi.firma_id))).data
     if not firma:
         raise HTTPException(status_code=404, detail="Firma bulunamadı.")
     firma_adi_log = firma[0].get("firma_adi", "bilinmeyen")
@@ -4180,7 +4193,7 @@ async def firma_shuttle_guncelle(bilgi: ShuttleGuncelleIstek, request: Request, 
             if bilgi.sistem_modu not in ("HARITA", "DURAK"):
                 raise HTTPException(status_code=400, detail="Geçersiz sistem modu (HARITA veya DURAK olmalı).")
             guncelleme["sistem_modu"] = bilgi.sistem_modu
-        supabase.table("firmalar").update(guncelleme).eq("id", bilgi.firma_id).execute()
+        await run_query(supabase.table("firmalar").update(guncelleme).eq("id", bilgi.firma_id))
         await audit_log_yaz(
             yapan=yetkili, eylem="SHUTTLE_MODUL_AC", hedef_tip="FIRMA", hedef_id=bilgi.firma_id,
             hedef_aciklama=f"shuttle modülü açıldı: {firma_adi_log}",
@@ -4192,7 +4205,7 @@ async def firma_shuttle_guncelle(bilgi: ShuttleGuncelleIstek, request: Request, 
     if not firma[0].get("vale_aktif"):
         raise HTTPException(status_code=400, detail="Shuttle kapatılamaz: firmanın açık başka hizmeti yok. Önce vale hizmetini açın.")
 
-    soforler = supabase.table("kullanicilar").select("kullanici_adi").eq("firma_id", bilgi.firma_id).eq("rol", "SOFOR").execute().data
+    soforler = (await run_query(supabase.table("kullanicilar").select("kullanici_adi").eq("firma_id", bilgi.firma_id).eq("rol", "SOFOR"))).data
     try:
         gorevler = [
             kullanicinin_tum_tokenlarini_revoke_et(
@@ -4206,7 +4219,7 @@ async def firma_shuttle_guncelle(bilgi: ShuttleGuncelleIstek, request: Request, 
         sentry_sdk.capture_exception(e)
 
     # Shuttle vehicles only; virtual valet vehicles (tip='VALE') are kept.
-    servis_araclar = [a["id"] for a in supabase.table("araclar").select("id, tip").eq("firma_id", bilgi.firma_id).execute().data
+    servis_araclar = [a["id"] for a in (await run_query(supabase.table("araclar").select("id, tip").eq("firma_id", bilgi.firma_id))).data
                       if (a.get("tip") or "SERVIS") != "VALE"]
 
     # Shuttle requests are deleted by vehicle, not by task type. The synthetic "MERKEZE DONUS"
@@ -4214,18 +4227,18 @@ async def firma_shuttle_guncelle(bilgi: ShuttleGuncelleIstek, request: Request, 
     # would survive and then block the vehicle delete through the foreign key.
     silinen_talepler = []
     if servis_araclar:
-        silinen_talepler = supabase.table("talepler").delete().eq("firma_id", bilgi.firma_id).in_(
-            "arac_id", servis_araclar).execute().data or []
-    supabase.table("kullanicilar").delete().eq("firma_id", bilgi.firma_id).eq("rol", "SOFOR").execute()
+        silinen_talepler = (await run_query(supabase.table("talepler").delete().eq("firma_id", bilgi.firma_id).in_(
+            "arac_id", servis_araclar))).data or []
+    await run_query(supabase.table("kullanicilar").delete().eq("firma_id", bilgi.firma_id).eq("rol", "SOFOR"))
 
     if servis_araclar:
-        supabase.table("arac_saat_sablonlari").delete().in_("arac_id", servis_araclar).execute()  # references araclar
-        supabase.table("araclar").delete().in_("id", servis_araclar).execute()
+        await run_query(supabase.table("arac_saat_sablonlari").delete().in_("arac_id", servis_araclar))  # references araclar
+        await run_query(supabase.table("araclar").delete().in_("id", servis_araclar))
     # Routes and stops only exist for shuttle.
-    supabase.table("duraklar").delete().eq("firma_id", bilgi.firma_id).execute()
-    supabase.table("guzergahlar").delete().eq("firma_id", bilgi.firma_id).execute()
+    await run_query(supabase.table("duraklar").delete().eq("firma_id", bilgi.firma_id))
+    await run_query(supabase.table("guzergahlar").delete().eq("firma_id", bilgi.firma_id))
 
-    supabase.table("firmalar").update({"shuttle_aktif": False}).eq("id", bilgi.firma_id).execute()
+    await run_query(supabase.table("firmalar").update({"shuttle_aktif": False}).eq("id", bilgi.firma_id))
     await audit_log_yaz(
         yapan=yetkili, eylem="SHUTTLE_MODUL_KAPAT", hedef_tip="FIRMA", hedef_id=bilgi.firma_id,
         hedef_aciklama=f"shuttle modülü kapatıldı (cascade): {firma_adi_log}",
@@ -4241,12 +4254,12 @@ async def firma_sil(firma_id: str, request: Request, yetkili = Depends(yetki_kon
     """SUPERADMIN only: delete a company and everything that belongs to it."""
     if yetkili["rol"] != "SUPERADMIN": raise HTTPException(status_code=403)
 
-    firma_bilgi = supabase.table("firmalar").select("firma_adi, sistem_modu").eq("id", firma_id).execute().data
+    firma_bilgi = (await run_query(supabase.table("firmalar").select("firma_adi, sistem_modu").eq("id", firma_id))).data
     if not firma_bilgi:
         raise HTTPException(status_code=404, detail="Firma bulunamadı.")
     firma_adi_log = firma_bilgi[0].get("firma_adi", "bilinmeyen")
     
-    pers = supabase.table("kullanicilar").select("kullanici_adi", count="exact").eq("firma_id", firma_id).execute()
+    pers = await run_query(supabase.table("kullanicilar").select("kullanici_adi", count="exact").eq("firma_id", firma_id))
     personel_sayisi = pers.count or 0
 
     # Revoke every user's tokens before deleting, as firma-aktiflik-guncelle does.
@@ -4268,8 +4281,8 @@ async def firma_sil(firma_id: str, request: Request, yetkili = Depends(yetki_kon
     # references araclar and must go before it; any new table referencing these must be
     # added to this list in the right place.
     for tablo in ("arac_saat_sablonlari", "duraklar", "talepler", "kullanicilar", "araclar", "guzergahlar", "markalar", "subeler"):
-        supabase.table(tablo).delete().eq("firma_id", firma_id).execute()
-    supabase.table("firmalar").delete().eq("id", firma_id).execute()
+        await run_query(supabase.table(tablo).delete().eq("firma_id", firma_id))
+    await run_query(supabase.table("firmalar").delete().eq("id", firma_id))
     await firma_cache_invalidate(firma_id)
 
     await audit_log_yaz(
@@ -4297,13 +4310,13 @@ async def firma_aktiflik(bilgi: AktiflikIstek, request: Request, yetkili = Depen
     a notice; other roles are refused at login.
     """
     if yetkili["rol"] != "SUPERADMIN": raise HTTPException(status_code=403)
-    supabase.table("firmalar").update({"is_active": bilgi.durum}).eq("id", bilgi.firma_id).execute()
+    await run_query(supabase.table("firmalar").update({"is_active": bilgi.durum}).eq("id", bilgi.firma_id))
     await firma_cache_invalidate(bilgi.firma_id)
 
     # On deactivation, revoke all the company's tokens, in parallel for large companies.
     if not bilgi.durum:
         try:
-            firma_kullanicilari = supabase.table("kullanicilar").select("kullanici_adi").eq("firma_id", bilgi.firma_id).execute().data
+            firma_kullanicilari = (await run_query(supabase.table("kullanicilar").select("kullanici_adi").eq("firma_id", bilgi.firma_id))).data
 
             revoke_gorevleri = [
                 kullanicinin_tum_tokenlarini_revoke_et(
@@ -4333,7 +4346,7 @@ async def firma_aktiflik(bilgi: AktiflikIstek, request: Request, yetkili = Depen
     return {"mesaj": "Güncellendi."}
 
 @app.post("/firma-konum-kaydet")
-async def firma_konum_kaydet(firma_id: str, lat: float, lng: float, yetkili = Depends(yetki_kontrol)):
+def firma_konum_kaydet(firma_id: str, lat: float, lng: float, yetkili = Depends(yetki_kontrol)):
     """Admins: set the base location that routes and ETAs are measured from.
 
     A branch admin sets their own branch's location; HQ admins and SUPERADMIN set the
@@ -4356,7 +4369,7 @@ async def firma_konum_kaydet(firma_id: str, lat: float, lng: float, yetkili = De
 
 @app.post("/sifre-belirle")
 @limiter.limit("5/minute")  # per IP, against guessing invitation tokens
-async def sifre_belirle(request: Request, istek: SifreBelirleIstek):
+def sifre_belirle(request: Request, istek: SifreBelirleIstek):
     """Invitation page (no login): set the password and display name for a new account.
 
     The invitation token is single use and expires after 7 days.
@@ -4427,8 +4440,8 @@ async def gorunen_ad_guncelle(istek: GorunenAdGuncelleIstek, request: Request, y
 
     yeni_ad = validate_gorunen_ad(istek.gorunen_ad or "")
 
-    hedef_res = supabase.table("kullanicilar").select("firma_id, rol, sube_id, gorunen_ad").eq(
-        "kullanici_adi", istek.kullanici_adi).execute()
+    hedef_res = await run_query(supabase.table("kullanicilar").select("firma_id, rol, sube_id, gorunen_ad").eq(
+        "kullanici_adi", istek.kullanici_adi))
     if not hedef_res.data:
         raise HTTPException(status_code=404, detail="Kullanıcı bulunamadı.")
     hedef = hedef_res.data[0]
@@ -4442,8 +4455,8 @@ async def gorunen_ad_guncelle(istek: GorunenAdGuncelleIstek, request: Request, y
             raise HTTPException(status_code=403, detail="Eşit veya yüksek yetkili kullanıcının adını değiştiremezsiniz.")
         sube_yazma_guard(yetkili, hedef.get("sube_id"))
 
-    if not supabase.table("kullanicilar").update({"gorunen_ad": yeni_ad}).eq(
-            "kullanici_adi", istek.kullanici_adi).execute().data:
+    if not (await run_query(supabase.table("kullanicilar").update({"gorunen_ad": yeni_ad}).eq(
+            "kullanici_adi", istek.kullanici_adi))).data:
         raise HTTPException(status_code=404, detail="Kullanıcı bulunamadı.")
 
     await audit_log_yaz(
@@ -4476,7 +4489,7 @@ async def personel_sifre_sifirla(istek: SifreSifirlaIstek, request: Request, yet
     if not re.search(r"[A-Za-z]", istek.yeni_sifre) or not re.search(r"\d", istek.yeni_sifre):
         raise HTTPException(status_code=400, detail="Şifre en az 1 harf ve 1 rakam içermeli.")
 
-    hedef_res = supabase.table("kullanicilar").select("firma_id, rol, sube_id").eq("kullanici_adi", istek.kullanici_adi).execute()
+    hedef_res = await run_query(supabase.table("kullanicilar").select("firma_id, rol, sube_id").eq("kullanici_adi", istek.kullanici_adi))
     if not hedef_res.data:
         raise HTTPException(status_code=404, detail="Kullanıcı bulunamadı.")
     hedef = hedef_res.data[0]
@@ -4490,7 +4503,7 @@ async def personel_sifre_sifirla(istek: SifreSifirlaIstek, request: Request, yet
 
         sube_yazma_guard(yetkili, hedef.get("sube_id"))
 
-    if not supabase.table("kullanicilar").update({"sifre": sifreyi_hashle(istek.yeni_sifre)}).eq("kullanici_adi", istek.kullanici_adi).execute().data:
+    if not (await run_query(supabase.table("kullanicilar").update({"sifre": sifreyi_hashle(istek.yeni_sifre)}).eq("kullanici_adi", istek.kullanici_adi))).data:
         raise HTTPException(status_code=404)
     
     await kullanicinin_tum_tokenlarini_revoke_et(
@@ -4515,7 +4528,7 @@ async def personel_sifre_sifirla(istek: SifreSifirlaIstek, request: Request, yet
 @app.put("/yonetici-iletisim-guncelle")
 async def yonetici_iletisim_guncelle(istek: IletisimGuncelleIstek, request: Request, yetkili = Depends(yetki_kontrol)):
     """SUPERADMIN only: edit a user's e-mail and phone from the platform admin panel."""
-    hedef_res = supabase.table("kullanicilar").select("firma_id, rol").eq("kullanici_adi", istek.kullanici_adi).execute()
+    hedef_res = await run_query(supabase.table("kullanicilar").select("firma_id, rol").eq("kullanici_adi", istek.kullanici_adi))
     if not hedef_res.data:
         raise HTTPException(status_code=404, detail="Kullanıcı bulunamadı.")
     hedef = hedef_res.data[0]
@@ -4530,7 +4543,7 @@ async def yonetici_iletisim_guncelle(istek: IletisimGuncelleIstek, request: Requ
     if em and not re.match(r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$", em):
         raise HTTPException(status_code=400, detail="Geçersiz e-posta formatı.")
     if em:
-        dup = supabase.table("kullanicilar").select("kullanici_adi").eq("email", em).neq("kullanici_adi", istek.kullanici_adi).execute()
+        dup = await run_query(supabase.table("kullanicilar").select("kullanici_adi").eq("email", em).neq("kullanici_adi", istek.kullanici_adi))
         if dup.data:
             raise HTTPException(status_code=400, detail="Bu e-posta adresi başka bir kullanıcıda kayıtlı.")
     guncelle["email"] = em or None
@@ -4541,7 +4554,7 @@ async def yonetici_iletisim_guncelle(istek: IletisimGuncelleIstek, request: Requ
         raise HTTPException(status_code=400, detail="Geçersiz telefon formatı.")
     guncelle["telefon"] = tel or None
 
-    if not supabase.table("kullanicilar").update(guncelle).eq("kullanici_adi", istek.kullanici_adi).execute().data:
+    if not (await run_query(supabase.table("kullanicilar").update(guncelle).eq("kullanici_adi", istek.kullanici_adi))).data:
         raise HTTPException(status_code=404, detail="Güncelleme başarısız.")
 
     # Log which fields are filled, not their values, to keep personal data out of the audit log.
@@ -4565,7 +4578,7 @@ async def arac_ekle(plaka: str, firma_id: str, marka: str = "Genel", sube_id: st
 
     # Shuttle vehicles need the shuttle module. Virtual valet vehicles are created by
     # kullanici-ekle, not here, so this check does not affect them.
-    _fs = supabase.table("firmalar").select("shuttle_aktif").eq("id", firma_id).execute().data
+    _fs = (await run_query(supabase.table("firmalar").select("shuttle_aktif").eq("id", firma_id))).data
     if _fs and _fs[0].get("shuttle_aktif") is False:
         raise HTTPException(status_code=400, detail="Bu firmada shuttle hizmeti tanımlı değil; servis aracı eklenemez.")
 
@@ -4573,11 +4586,11 @@ async def arac_ekle(plaka: str, firma_id: str, marka: str = "Genel", sube_id: st
 
     temiz_marka = validate_metin(marka or "Genel", "Marka", max_uzunluk=40)
 
-    hedef_sube_id = hedef_sube_belirle(yetkili, firma_id, sube_id)
+    hedef_sube_id = await run_in_threadpool(hedef_sube_belirle, yetkili, firma_id, sube_id)
 
     # Registration limit is the quota plus one: each scope may keep one spare vehicle for
     # breakdowns and accidents. (The active limit in sofor-arac-ata is the quota itself.)
-    kayit_kota, kapsam_arac_ids = kapsam_kota_bilgisi(firma_id, hedef_sube_id)
+    kayit_kota, kapsam_arac_ids = await run_in_threadpool(kapsam_kota_bilgisi, firma_id, hedef_sube_id)
     if len(kapsam_arac_ids) >= kayit_kota + 1:
         if hedef_sube_id:
             kota_mesaji = f"Bu şubenin araç kayıt kotası dolu ({len(kapsam_arac_ids)}/{kayit_kota}+1 yedek). Başka şubeden kota kaydırılabilir ya da kalıcı artış için Shuttle & Valet Ops ekibiyle iletişime geçin."
@@ -4586,12 +4599,12 @@ async def arac_ekle(plaka: str, firma_id: str, marka: str = "Genel", sube_id: st
         raise HTTPException(status_code=400, detail=kota_mesaji)
 
     # Plates are unique per company, not globally.
-    if supabase.table("araclar").select("id").eq("plaka", temiz_plaka).eq("firma_id", firma_id).execute().data:
+    if (await run_query(supabase.table("araclar").select("id").eq("plaka", temiz_plaka).eq("firma_id", firma_id))).data:
         raise HTTPException(status_code=400, detail="Bu plaka firmanıza zaten kayıtlı.")
 
     yeni_id = str(uuid.uuid4())
 
-    supabase.table("araclar").insert({
+    await run_query(supabase.table("araclar").insert({
         "id": yeni_id,
         "plaka": temiz_plaka,
         "firma_id": firma_id,
@@ -4599,7 +4612,7 @@ async def arac_ekle(plaka: str, firma_id: str, marka: str = "Genel", sube_id: st
         "sube_id": hedef_sube_id,
         "tip": tip,
         "kayit_tarihi": datetime.now(timezone.utc).isoformat()
-    }).execute()
+    }))
 
     await manager.broadcast_firma(firma_id, "YENILE")
     
@@ -4610,20 +4623,20 @@ async def arac_sil(arac_id: str, request: Request, yetkili = Depends(yetki_kontr
     """Panels: delete a vehicle that has no assigned driver and no requests."""
     if yetkili["rol"] not in ["ADMIN", "SUPERADMIN", "OPERASYON"]: raise HTTPException(status_code=403)
     if yetkili["rol"] != "SUPERADMIN":
-        if not (k:=supabase.table("araclar").select("firma_id, sube_id").eq("id", arac_id).execute()).data or k.data[0].get("firma_id") != yetkili.get("firma_id"): raise HTTPException(status_code=403)
+        if not (k:=(await run_query(supabase.table("araclar").select("firma_id, sube_id").eq("id", arac_id)))).data or k.data[0].get("firma_id") != yetkili.get("firma_id"): raise HTTPException(status_code=403)
         sube_yazma_guard(yetkili, k.data[0].get("sube_id"))
-    if supabase.table("kullanicilar").select("kullanici_adi").eq("arac_id", arac_id).execute().data: raise HTTPException(status_code=400, detail="Önce şoför bağını koparın.")
+    if (await run_query(supabase.table("kullanicilar").select("kullanici_adi").eq("arac_id", arac_id))).data: raise HTTPException(status_code=400, detail="Önce şoför bağını koparın.")
 
     # talepler.arac_id has a foreign key to araclar, so a vehicle with requests cannot be
     # deleted (Postgres error 23503, a 500). Answer with a clear 400 instead; the requests are
     # report history and must not be deleted silently.
-    if supabase.table("talepler").select("id").eq("arac_id", arac_id).limit(1).execute().data:
+    if (await run_query(supabase.table("talepler").select("id").eq("arac_id", arac_id).limit(1))).data:
         raise HTTPException(status_code=400, detail="Bu araca ait görev kayıtları var; araç silinemez. Kayıtlar 30 gün sonra otomatik temizlenir.")
 
-    arac_bilgi = supabase.table("araclar").select("plaka, firma_id").eq("id", arac_id).execute().data
+    arac_bilgi = (await run_query(supabase.table("araclar").select("plaka, firma_id").eq("id", arac_id))).data
     plaka_log = arac_bilgi[0].get("plaka", "bilinmeyen") if arac_bilgi else "bilinmeyen"
 
-    supabase.table("araclar").delete().eq("id", arac_id).execute()
+    await run_query(supabase.table("araclar").delete().eq("id", arac_id))
 
     await audit_log_yaz(
         yapan=yetkili,
@@ -4641,7 +4654,7 @@ async def arac_sil(arac_id: str, request: Request, yetkili = Depends(yetki_kontr
 # ============================================================
 
 @app.get("/firma-guzergahlari")
-async def firma_guzergahlari_getir(firma_id: str, yetkili = Depends(yetki_kontrol)):
+def firma_guzergahlari_getir(firma_id: str, yetkili = Depends(yetki_kontrol)):
     """The company's routes (guzergah) within the caller's branch scope."""
     if yetkili["rol"] != "SUPERADMIN" and yetkili.get("firma_id") != firma_id:
         raise HTTPException(status_code=403, detail="Bu firmaya yetkiniz yok.")
@@ -4649,7 +4662,7 @@ async def firma_guzergahlari_getir(firma_id: str, yetkili = Depends(yetki_kontro
     return kapsam_sube_filtrele(yetkili, guzergahlar)
 
 @app.post("/guzergah-ekle")
-async def guzergah_ekle(bilgi: GuzergahIstek, yetkili = Depends(yetki_kontrol)):
+def guzergah_ekle(bilgi: GuzergahIstek, yetkili = Depends(yetki_kontrol)):
     """Admins: create a route. Routes and stops exist only for the shuttle module."""
     if yetkili["rol"] not in ["ADMIN", "SUPERADMIN"] or (yetkili["rol"] == "ADMIN" and yetkili.get("firma_id") != bilgi.firma_id):
         raise HTTPException(status_code=403)
@@ -4674,7 +4687,7 @@ async def guzergah_ekle(bilgi: GuzergahIstek, yetkili = Depends(yetki_kontrol)):
     return {"mesaj": "Güzergah başarıyla eklendi."}
 
 @app.post("/guzergah-tipi-hesapla/{guzergah_id}")
-async def guzergah_tipi_hesapla(guzergah_id: str, yetkili = Depends(yetki_kontrol)):
+def guzergah_tipi_hesapla(guzergah_id: str, yetkili = Depends(yetki_kontrol)):
     """Admin panel ("Done" on a route): detect the route's shape and store it in guzergahlar.tip.
 
     Compares the straight-line distance from base to the middle stop (stop ceil(n/2)) and
@@ -4722,12 +4735,12 @@ async def guzergah_sil(guzergah_id: str, request: Request, yetkili = Depends(yet
         raise HTTPException(status_code=403)
 
     if yetkili["rol"] != "SUPERADMIN":
-        guz_kontrol = supabase.table("guzergahlar").select("firma_id, guzergah_adi, sube_id").eq("id", guzergah_id).execute().data
+        guz_kontrol = (await run_query(supabase.table("guzergahlar").select("firma_id, guzergah_adi, sube_id").eq("id", guzergah_id))).data
         if not guz_kontrol or guz_kontrol[0].get("firma_id") != yetkili.get("firma_id"):
             raise HTTPException(status_code=403, detail="Bu güzergah firmanıza ait değil.")
         sube_yazma_guard(yetkili, guz_kontrol[0].get("sube_id"))
 
-    bagli_araclar = supabase.table("araclar").select("id, plaka").eq("guzergah_id", guzergah_id).execute().data
+    bagli_araclar = (await run_query(supabase.table("araclar").select("id, plaka").eq("guzergah_id", guzergah_id))).data
     
     if bagli_araclar:
         plakalar = ", ".join([a["plaka"] for a in bagli_araclar])
@@ -4736,13 +4749,13 @@ async def guzergah_sil(guzergah_id: str, request: Request, yetkili = Depends(yet
             detail=f"Bu güzergah {len(bagli_araclar)} araca bağlı ({plakalar}). Önce bu araçları başka güzergaha atayın."
         )
 
-    guz_bilgi = supabase.table("guzergahlar").select("guzergah_adi").eq("id", guzergah_id).execute().data
+    guz_bilgi = (await run_query(supabase.table("guzergahlar").select("guzergah_adi").eq("id", guzergah_id))).data
     guz_adi_log = guz_bilgi[0].get("guzergah_adi", "bilinmeyen") if guz_bilgi else "bilinmeyen"
 
     # Stops first, then the route itself.
-    supabase.table("duraklar").delete().eq("guzergah_id", guzergah_id).execute()
+    await run_query(supabase.table("duraklar").delete().eq("guzergah_id", guzergah_id))
 
-    supabase.table("guzergahlar").delete().eq("id", guzergah_id).execute()
+    await run_query(supabase.table("guzergahlar").delete().eq("id", guzergah_id))
 
     await audit_log_yaz(
         yapan=yetkili,
@@ -4774,18 +4787,18 @@ async def firma_duraklari_getir(
         except HTTPException:
             payload = None
         if payload and (payload.get("rol") == "SUPERADMIN" or payload.get("firma_id") == firma_id):
-            return supabase.table("duraklar").select("*").eq("firma_id", firma_id).execute().data
+            return (await run_query(supabase.table("duraklar").select("*").eq("firma_id", firma_id))).data
 
     if talep_token:
-        kontrol = supabase.table("talepler").select("firma_id, kayit_tarihi, gorev_tipi").eq("token", talep_token).execute()
+        kontrol = await run_query(supabase.table("talepler").select("firma_id, kayit_tarihi, gorev_tipi").eq("token", talep_token))
         if (kontrol.data and kontrol.data[0]["firma_id"] == firma_id
                 and not musteri_linki_suresi_doldu(talep_token, kontrol.data[0])):
-            return supabase.table("duraklar").select("*").eq("firma_id", firma_id).execute().data
+            return (await run_query(supabase.table("duraklar").select("*").eq("firma_id", firma_id))).data
 
     raise HTTPException(status_code=403, detail="Yetkisiz erişim.")
 
 @app.post("/durak-ekle")
-async def durak_ekle(bilgi: DurakIstek, yetkili = Depends(yetki_kontrol)):
+def durak_ekle(bilgi: DurakIstek, yetkili = Depends(yetki_kontrol)):
     """Admins: add a stop to a route at the given position (sira_no)."""
     if yetkili["rol"] not in ["ADMIN", "SUPERADMIN"] or (yetkili["rol"] == "ADMIN" and yetkili.get("firma_id") != bilgi.firma_id):
         raise HTTPException(status_code=403)
@@ -4835,7 +4848,7 @@ async def durak_ekle(bilgi: DurakIstek, yetkili = Depends(yetki_kontrol)):
         raise HTTPException(status_code=500, detail="Durak eklenemedi. Lütfen tekrar deneyin.")
 
 @app.delete("/durak-sil/{durak_id}")
-async def durak_sil(durak_id: str, yetkili = Depends(yetki_kontrol)):
+def durak_sil(durak_id: str, yetkili = Depends(yetki_kontrol)):
     """Admins: delete a stop and renumber the rest of the route."""
     if yetkili["rol"] not in ["ADMIN", "SUPERADMIN"]:
         raise HTTPException(status_code=403)
@@ -4871,7 +4884,7 @@ async def durak_sil(durak_id: str, yetkili = Depends(yetki_kontrol)):
         raise HTTPException(status_code=500, detail="Durak silinemedi. Lütfen tekrar deneyin.")
 
 @app.put("/arac-guzergah-ata")
-async def arac_guzergah_ata(istek: AracGuzergahAtaIstek, yetkili = Depends(yetki_kontrol)):
+def arac_guzergah_ata(istek: AracGuzergahAtaIstek, yetkili = Depends(yetki_kontrol)):
     """Panels: put a vehicle on a route, or take it off (guzergah_id empty)."""
     if yetkili["rol"] not in ["ADMIN", "SUPERADMIN", "OPERASYON"]: raise HTTPException(status_code=403)
 
@@ -4903,7 +4916,7 @@ async def durak_islem_tamamla(istek: DurakTamamlaIstek, yetkili = Depends(yetki_
     status filter in _tek_yolcu_guncelle, but a failure halfway can leave partial state.
     """
     if yetkili["rol"] not in ["SUPERADMIN", "SOFOR"]: raise HTTPException(status_code=403)
-    if not sofor_kendi_araci_mi(yetkili, istek.arac_id):
+    if not (await run_in_threadpool(sofor_kendi_araci_mi, yetkili, istek.arac_id)):
         raise HTTPException(status_code=403, detail="Sadece atandığınız araçta işlem yapabilirsiniz.")
     # Cap the list: more than 100 passengers at one stop is not realistic, and an unbounded
     # list would start one thread and one update per entry.
@@ -4911,7 +4924,7 @@ async def durak_islem_tamamla(istek: DurakTamamlaIstek, yetkili = Depends(yetki_
         raise HTTPException(status_code=400, detail="Tek durakta en fazla 100 yolcu işlenebilir.")
 
     # One distance from the previous stop to this one, shared by everyone boarding here.
-    arac_data = supabase.table("araclar").select("son_durak_lat, son_durak_lng, firma_id, rota_aktif").eq("id", istek.arac_id).execute().data
+    arac_data = (await run_query(supabase.table("araclar").select("son_durak_lat, son_durak_lng, firma_id, rota_aktif").eq("id", istek.arac_id))).data
     if not arac_data:
         raise HTTPException(status_code=404, detail="Araç bulunamadı.")
     arac = arac_data[0]
@@ -4945,7 +4958,7 @@ async def durak_islem_tamamla(istek: DurakTamamlaIstek, yetkili = Depends(yetki_
         elif y.islem == "indi": yeni_durum = "YOLCU INDI"
 
         km = yapilan_km if y.islem != "indi" else 0  # the trip distance was recorded at pickup
-        guncelleme_gorevleri.append(asyncio.to_thread(_tek_yolcu_guncelle, y.token, yeni_durum, km))
+        guncelleme_gorevleri.append(run_in_threadpool(_tek_yolcu_guncelle, y.token, yeni_durum, km))
 
     if guncelleme_gorevleri:
         sonuclar = await asyncio.gather(*guncelleme_gorevleri, return_exceptions=True)
@@ -4959,13 +4972,13 @@ async def durak_islem_tamamla(istek: DurakTamamlaIstek, yetkili = Depends(yetki_
             raise HTTPException(status_code=500, detail="Bazı yolcular güncellenemedi. İşlem tekrar denenecek.")
 
     # This stop becomes the vehicle's previous stop and its shown position.
-    supabase.table("araclar").update({
+    await run_query(supabase.table("araclar").update({
         "son_durak_lat": istek.durak_lat, 
         "son_durak_lng": istek.durak_lng,
         "son_lat": istek.durak_lat,   
         "son_lng": istek.durak_lng,
         "son_hareket_zamani": datetime.now(timezone.utc).isoformat()
-    }).eq("id", istek.arac_id).execute()
+    }).eq("id", istek.arac_id))
     
     await manager.broadcast_firma(arac["firma_id"], "YENILE")
     await manager.broadcast_arac(istek.arac_id, "YENILE")
@@ -4991,7 +5004,7 @@ async def arac_saat_guncelle(istek: SaatGuncelleIstek, yetkili = Depends(yetki_k
         raise HTTPException(status_code=400, detail="arac_id gerekli.")
 
     # One query serves both the company check and the no-op check.
-    arac_kontrol = supabase.table("araclar").select("firma_id, hareket_saati, sube_id").eq("id", arac_id).execute().data
+    arac_kontrol = (await run_query(supabase.table("araclar").select("firma_id, hareket_saati, sube_id").eq("id", arac_id))).data
     if not arac_kontrol:
         raise HTTPException(status_code=404, detail="Araç bulunamadı.")
     mevcut_arac = arac_kontrol[0]
@@ -5013,7 +5026,7 @@ async def arac_saat_guncelle(istek: SaatGuncelleIstek, yetkili = Depends(yetki_k
     if yeni_saat == mevcut_saat:
         return {"status": "noop", "mesaj": "Saat zaten aynı, güncelleme yapılmadı."}
 
-    supabase.table("araclar").update({"hareket_saati": yeni_saat}).eq("id", arac_id).execute()
+    await run_query(supabase.table("araclar").update({"hareket_saati": yeni_saat}).eq("id", arac_id))
     
     await manager.broadcast_firma(mevcut_arac.get("firma_id"), "YENILE")
     
@@ -5021,7 +5034,7 @@ async def arac_saat_guncelle(istek: SaatGuncelleIstek, yetkili = Depends(yetki_k
 
 # Departure time templates: saved "HH:MM" values per vehicle that the panels offer as quick picks.
 @app.get("/admin/arac-saat-sablonlari/{arac_id}")
-async def get_sablonlar(arac_id: str, yetkili = Depends(yetki_kontrol)):
+def get_sablonlar(arac_id: str, yetkili = Depends(yetki_kontrol)):
     """Templates of one vehicle."""
     if yetkili["rol"] != "SUPERADMIN":
         _a = supabase.table("araclar").select("firma_id, sube_id").eq("id", arac_id).execute().data
@@ -5031,7 +5044,7 @@ async def get_sablonlar(arac_id: str, yetkili = Depends(yetki_kontrol)):
     return supabase.table("arac_saat_sablonlari").select("*").eq("arac_id", arac_id).execute().data
 
 @app.get("/admin/tum-saat-sablonlari")
-async def get_tum_sablonlar(yetkili = Depends(yetki_kontrol)):
+def get_tum_sablonlar(yetkili = Depends(yetki_kontrol)):
     """All templates of the caller's company.
 
     Office roles only. SUPERADMIN is excluded because its token has no company.
@@ -5041,7 +5054,7 @@ async def get_tum_sablonlar(yetkili = Depends(yetki_kontrol)):
     return supabase.table("arac_saat_sablonlari").select("*").eq("firma_id", yetkili["firma_id"]).execute().data
 
 @app.post("/admin/arac-saat-sablonlari")
-async def add_sablon(istek: SablonIstek, yetkili = Depends(yetki_kontrol)):
+def add_sablon(istek: SablonIstek, yetkili = Depends(yetki_kontrol)):
     """Add a template to a vehicle of the caller's company."""
     if istek.saat and not re.match(r'^([01]\d|2[0-3]):[0-5]\d$', istek.saat):
         raise HTTPException(status_code=400, detail="Geçersiz saat formatı (HH:MM beklenir).")
@@ -5059,7 +5072,7 @@ async def add_sablon(istek: SablonIstek, yetkili = Depends(yetki_kontrol)):
     }).execute()
 
 @app.delete("/admin/arac-saat-sablonlari/{sablon_id}")
-async def delete_sablon(sablon_id: int, yetkili = Depends(yetki_kontrol)):
+def delete_sablon(sablon_id: int, yetkili = Depends(yetki_kontrol)):
     """Delete a template. The firma_id filter limits this to the caller's own company."""
     return supabase.table("arac_saat_sablonlari").delete().eq("id", sablon_id).eq("firma_id", yetkili["firma_id"]).execute()
 
@@ -5068,7 +5081,7 @@ async def sofor_baglantisi_kes(kullanici_adi: str, yetkili = Depends(yetki_kontr
     """Panels: unassign a driver from their vehicle."""
     if yetkili["rol"] not in ["ADMIN", "SUPERADMIN", "OPERASYON"]: raise HTTPException(status_code=403)
     # The old vehicle id is needed for the broadcast after unassigning.
-    k = supabase.table("kullanicilar").select("firma_id, sube_id, arac_id").eq("kullanici_adi", kullanici_adi).execute().data
+    k = (await run_query(supabase.table("kullanicilar").select("firma_id, sube_id, arac_id").eq("kullanici_adi", kullanici_adi))).data
     if not k:
         raise HTTPException(status_code=404, detail="Kullanıcı bulunamadı.")
     sofor_firma_id = k[0].get("firma_id")
@@ -5076,7 +5089,7 @@ async def sofor_baglantisi_kes(kullanici_adi: str, yetkili = Depends(yetki_kontr
     if yetkili["rol"] != "SUPERADMIN":
         if sofor_firma_id != yetkili.get("firma_id"): raise HTTPException(status_code=403)
         sube_yazma_guard(yetkili, k[0].get("sube_id"))
-    supabase.table("kullanicilar").update({"arac_id": None}).eq("kullanici_adi", kullanici_adi).execute()
+    await run_query(supabase.table("kullanicilar").update({"arac_id": None}).eq("kullanici_adi", kullanici_adi))
     # Broadcast, like sofor-arac-ata, so the driver app switches to "no vehicle" right away.
     if sofor_firma_id:
         await manager.broadcast_firma(sofor_firma_id, "YENILE")
@@ -5088,7 +5101,7 @@ async def sofor_baglantisi_kes(kullanici_adi: str, yetkili = Depends(yetki_kontr
 # sw.js from its cache, it would never notice a new version and the PWA would stay on old
 # code. This route is declared before the StaticFiles mount so it takes precedence.
 @app.get("/sw.js")
-async def service_worker_dosyasi():
+def service_worker_dosyasi():
     return FileResponse(
         "frontend/sw.js",
         media_type="application/javascript",
@@ -5124,7 +5137,7 @@ async def vale_konum_onay(bilgi: ValeKonumIstek, request: Request):
     if bilgi.lat == 0.0 and bilgi.lng == 0.0:
         raise HTTPException(status_code=400, detail="Konum seçilmemiş görünüyor. Lütfen haritadan geçerli bir nokta seçin.")
 
-    res = supabase.table("talepler").select("id, firma_id, arac_id, durum, gorev_tipi, kayit_tarihi").eq("token", bilgi.token).execute()
+    res = await run_query(supabase.table("talepler").select("id, firma_id, arac_id, durum, gorev_tipi, kayit_tarihi").eq("token", bilgi.token))
     if not res.data:
         raise HTTPException(status_code=404, detail="Geçersiz link.")
 
@@ -5139,7 +5152,7 @@ async def vale_konum_onay(bilgi: ValeKonumIstek, request: Request):
 
     # Consent check, identical to /konum-dogrula; keep the two in sync. Valet customers see
     # the same privacy notice and consent text as shuttle passengers.
-    if kvkk_riza_gerekli_mi(talep.get("firma_id")):
+    if (await run_in_threadpool(kvkk_riza_gerekli_mi, talep.get("firma_id"))):
         if not bilgi.riza_onay:
             raise HTTPException(
                 status_code=400,
@@ -5156,13 +5169,13 @@ async def vale_konum_onay(bilgi: ValeKonumIstek, request: Request):
 
     # The .eq("durum") filter means that two confirmations from two tabs are applied once.
     # Note the column names are konum_lat/konum_lng; talepler has no lat/lng columns.
-    supabase.table("talepler").update({
+    await run_query(supabase.table("talepler").update({
         "konum_lat": bilgi.lat,
         "konum_lng": bilgi.lng,
         "durum": "KONUM_ALINDI_VALE",
         "riza_alindi": True,
         "riza_reddedildi": False   # clears the badge if the customer refused earlier and came back
-    }).eq("id", talep["id"]).eq("durum", "BEKLIYOR_KONUM").execute()
+    }).eq("id", talep["id"]).eq("durum", "BEKLIYOR_KONUM"))
 
     await manager.broadcast_firma(talep["firma_id"], "YENILE")
     if talep.get("arac_id"):
@@ -5192,7 +5205,7 @@ async def riza_red(bilgi: RizaIstek, request: Request):
       - the panel shows a badge and staff continue by phone.
     Refusing has to be possible and harmless, otherwise consent given here would not be free.
     """
-    res = supabase.table("talepler").select("id, firma_id, gorev_tipi, durum").eq("token", bilgi.token).execute().data
+    res = (await run_query(supabase.table("talepler").select("id, firma_id, gorev_tipi, durum").eq("token", bilgi.token))).data
     if not res:
         raise HTTPException(status_code=404, detail="Geçersiz link.")
     talep = res[0]
@@ -5208,8 +5221,8 @@ async def riza_red(bilgi: RizaIstek, request: Request):
     # Quick flag for the panel badge, to tell "refused" apart from "never opened the link"
     # (see db/kvkk_riza.sql). Only applied while no location has been given yet; for a
     # request already in progress the call is silently ignored so no wrong badge appears.
-    supabase.table("talepler").update({"riza_reddedildi": True}).eq(
-        "id", talep["id"]).in_("durum", ["BEKLİYOR", "BEKLIYOR_KONUM"]).execute()
+    await run_query(supabase.table("talepler").update({"riza_reddedildi": True}).eq(
+        "id", talep["id"]).in_("durum", ["BEKLİYOR", "BEKLIYOR_KONUM"]))
 
     await manager.broadcast_firma(talep.get("firma_id"), "YENILE")
     return {"mesaj": "Onay vermediniz. Konum bilginiz alınmadı; firma sizinle iletişime geçecektir."}
@@ -5227,8 +5240,8 @@ async def riza_geri_cek(bilgi: RizaIstek, request: Request):
     chain of custody (the reasoning behind VALE_IPTAL_EDILEBILIR_DURUMLAR). The location is
     removed, the ETA stops, the panel shows a warning, and a person closes the task.
     """
-    res = supabase.table("talepler").select(
-        "id, firma_id, arac_id, gorev_tipi, durum, konum_lat").eq("token", bilgi.token).execute().data
+    res = (await run_query(supabase.table("talepler").select(
+        "id, firma_id, arac_id, gorev_tipi, durum, konum_lat").eq("token", bilgi.token))).data
     if not res:
         raise HTTPException(status_code=404, detail="Geçersiz link.")
     talep = res[0]
@@ -5268,7 +5281,7 @@ async def riza_geri_cek(bilgi: RizaIstek, request: Request):
         if talep.get("durum") in ("KONUM ALINDI", "SERVIS_HAZIR"):
             guncelleme["durum"] = "BEKLİYOR"
 
-    supabase.table("talepler").update(guncelleme).eq("id", talep["id"]).execute()
+    await run_query(supabase.table("talepler").update(guncelleme).eq("id", talep["id"]))
 
     await manager.broadcast_firma(talep.get("firma_id"), "YENILE")
     if talep.get("arac_id"):
@@ -5333,7 +5346,7 @@ async def vale_durum_guncelle(bilgi: ValeDurumGuncelleIstek, yetkili = Depends(y
         raise HTTPException(status_code=403, detail="Sadece kendi atandığınız görevi güncelleyebilirsiniz.")
 
     # marka is read for the milestone log (per-brand reports).
-    res = supabase.table("talepler").select("id, firma_id, sube_id, marka, durum, gorev_tipi, konum_lat, konum_lng").eq("id", bilgi.talep_id).eq("arac_id", bilgi.arac_id).execute()
+    res = await run_query(supabase.table("talepler").select("id, firma_id, sube_id, marka, durum, gorev_tipi, konum_lat, konum_lng").eq("id", bilgi.talep_id).eq("arac_id", bilgi.arac_id))
     if not res.data:
         raise HTTPException(status_code=404, detail="Görev bulunamadı.")
 
@@ -5401,12 +5414,10 @@ async def vale_durum_guncelle(bilgi: ValeDurumGuncelleIstek, yetkili = Depends(y
     )
     if km_yazilacak and talep.get("konum_lat") is not None:
         try:
-            f_row = supabase.table("firmalar").select("merkez_lat, merkez_lng").eq("id", firma_id).execute().data
-            arac_row = supabase.table("araclar").select("sube_id").eq("id", bilgi.arac_id).execute().data
+            f_row = (await run_query(supabase.table("firmalar").select("merkez_lat, merkez_lng").eq("id", firma_id))).data
+            arac_row = (await run_query(supabase.table("araclar").select("sube_id").eq("id", bilgi.arac_id))).data
             if f_row:
-                m_lat, m_lng = referans_konum(
-                    firma_id, arac_row[0].get("sube_id") if arac_row else None,
-                    (f_row[0].get("merkez_lat"), f_row[0].get("merkez_lng")))
+                m_lat, m_lng = await run_in_threadpool(referans_konum, firma_id, arac_row[0].get("sube_id") if arac_row else None, (f_row[0].get("merkez_lat"), f_row[0].get("merkez_lng")))
                 if m_lat is not None:
                     yol = await yol_mesafesi_verisi_async(talep["konum_lat"], talep["konum_lng"], m_lat, m_lng)
                     update_data["mesafe_km"] = yol.get("km", 0)
@@ -5417,7 +5428,7 @@ async def vale_durum_guncelle(bilgi: ValeDurumGuncelleIstek, yetkili = Depends(y
     # same transition. The losing request still reaches this point and still gets a success
     # response, but durum_gercekten_degisti is False for it, and the milestone code below
     # checks that so the loser does not write a phantom milestone row.
-    durum_guncellemesi = supabase.table("talepler").update(update_data).eq("id", bilgi.talep_id).eq("durum", talep.get("durum")).execute()
+    durum_guncellemesi = await run_query(supabase.table("talepler").update(update_data).eq("id", bilgi.talep_id).eq("durum", talep.get("durum")))
     durum_gercekten_degisti = bool(durum_guncellemesi.data)
 
     # Update the valet's virtual vehicle the way driver actions update a shuttle vehicle:
@@ -5460,7 +5471,7 @@ async def vale_durum_guncelle(bilgi: ValeDurumGuncelleIstek, yetkili = Depends(y
         arac_update["son_hareket_zamani"] = datetime.now(timezone.utc).isoformat()
 
     if arac_update:
-        supabase.table("araclar").update(arac_update).eq("id", bilgi.arac_id).execute()
+        await run_query(supabase.table("araclar").update(arac_update).eq("id", bilgi.arac_id))
 
     # ------------------------------------------------------------
     # Punctuality milestones (db/gorev_etaplari.sql)
@@ -5482,7 +5493,7 @@ async def vale_durum_guncelle(bilgi: ValeDurumGuncelleIstek, yetkili = Depends(y
         elif alim and bilgi.yeni_durum == "ARAC_ALINDI":
             await etap_kapat(bilgi.talep_id, ETAP_MUSTERIYE_GIDIS, v_lat, v_lng, m_lat, m_lng,
                              bilgi.konum_yasi_sn, bilgi.konum_dogruluk_m)
-            s_lat, s_lng = vale_merkez_koordinati(firma_id, bilgi.arac_id)
+            s_lat, s_lng = await run_in_threadpool(vale_merkez_koordinati, firma_id, bilgi.arac_id)
             # The return-to-service promise starts from the valet's own position when there is
             # one, and from the customer's door only as a fallback. The door can be NULL after a
             # consent withdrawal, which would leave the leg without a promise, and the valet may
@@ -5491,7 +5502,7 @@ async def vale_durum_guncelle(bilgi: ValeDurumGuncelleIstek, yetkili = Depends(y
             b_lng = v_lng if v_lng is not None else m_lng
             await etap_ac(talep, ETAP_SERVISE_DONUS, b_lat, b_lng, s_lat, s_lng)
         elif alim and bilgi.yeni_durum == "TAMAM_SERVIS":
-            s_lat, s_lng = vale_merkez_koordinati(firma_id, bilgi.arac_id)
+            s_lat, s_lng = await run_in_threadpool(vale_merkez_koordinati, firma_id, bilgi.arac_id)
             await etap_kapat(bilgi.talep_id, ETAP_SERVISE_DONUS, v_lat, v_lng, s_lat, s_lng,
                              bilgi.konum_yasi_sn, bilgi.konum_dogruluk_m)
         elif (not alim) and bilgi.yeni_durum == "VALE_YOLDA":
@@ -5510,7 +5521,7 @@ class ServistekiAracCikarIstek(BaseModel):
     sebep: str = ""
 
 @app.get("/serviste-bekleyen-araclar")
-async def serviste_bekleyen_araclar(firma_id: str, yetkili = Depends(yetki_kontrol)):
+def serviste_bekleyen_araclar(firma_id: str, yetkili = Depends(yetki_kontrol)):
     """Panels: customer cars that a valet brought in and that are waiting at the service center.
 
     These are completed pickup tasks (TAMAM_SERVIS) that have no delivery task yet and were
@@ -5556,7 +5567,7 @@ async def servisteki_arac_cikar(bilgi: ServistekiAracCikarIstek, request: Reques
     if yetkili["rol"] not in ["ADMIN", "SUPERADMIN", "OPERASYON", "DANISMAN"]:
         raise HTTPException(status_code=403)
 
-    res = supabase.table("talepler").select("id, firma_id, musteri_plaka, gorev_tipi, durum").eq("id", bilgi.talep_id).execute().data
+    res = (await run_query(supabase.table("talepler").select("id, firma_id, musteri_plaka, gorev_tipi, durum").eq("id", bilgi.talep_id))).data
     if not res:
         raise HTTPException(status_code=404, detail="Kayıt bulunamadı.")
     kayit = res[0]
@@ -5566,10 +5577,10 @@ async def servisteki_arac_cikar(bilgi: ServistekiAracCikarIstek, request: Reques
         raise HTTPException(status_code=400, detail="Bu kayıt serviste bekleyen araç değil.")
 
     # Destroy the customer's link too: the car is no longer at the service center.
-    supabase.table("talepler").update({
+    await run_query(supabase.table("talepler").update({
         "serviste_kapandi": True,
         "token": f"BTT-{secrets.token_hex(8)}"
-    }).eq("id", bilgi.talep_id).execute()
+    }).eq("id", bilgi.talep_id))
     await audit_log_yaz(
         yapan=yetkili, eylem="SERVISTEKI_ARAC_CIKAR", hedef_tip="TALEP", hedef_id=bilgi.talep_id,
         hedef_aciklama=f"serviste bekleyen araç listeden çıkarıldı: {kayit.get('musteri_plaka')}",
@@ -5596,9 +5607,9 @@ async def vale_gorev_iptal(bilgi: ValeGorevIptalIstek, request: Request, yetkili
     if not _gecerli_uuid(bilgi.talep_id):
         raise HTTPException(status_code=400, detail="Geçersiz görev kaydı.")
 
-    res = supabase.table("talepler").select(
+    res = (await run_query(supabase.table("talepler").select(
         "id, firma_id, arac_id, marka, sube_id, musteri_ad, musteri_plaka, gorev_tipi, durum, iliskili_talep_id"
-    ).eq("id", bilgi.talep_id).execute().data
+    ).eq("id", bilgi.talep_id))).data
     if not res:
         raise HTTPException(status_code=404, detail="Görev bulunamadı.")
     kayit = res[0]
@@ -5629,13 +5640,13 @@ async def vale_gorev_iptal(bilgi: ValeGorevIptalIstek, request: Request, yetkili
     # Cancelling closes the task, so the location is erased and the link destroyed. The
     # .in_("durum", ...) filter is a race guard: if the valet took the car at that very
     # moment, the cancel does not apply.
-    guncelleme = supabase.table("talepler").update({
+    guncelleme = await run_query(supabase.table("talepler").update({
         "durum": "IPTAL_EDILDI",
         "tamamlanma_tarihi": datetime.now(timezone.utc).isoformat(),
         "konum_lat": None,
         "konum_lng": None,
         "token": f"BTT-{secrets.token_hex(8)}"
-    }).eq("id", bilgi.talep_id).in_("durum", iptal_izinli_durumlar).execute()
+    }).eq("id", bilgi.talep_id).in_("durum", iptal_izinli_durumlar))
 
     if not guncelleme.data:
         raise HTTPException(status_code=409, detail="Görev bu sırada ilerledi; iptal edilemedi. Ekranı yenileyin.")
@@ -5644,8 +5655,8 @@ async def vale_gorev_iptal(bilgi: ValeGorevIptalIstek, request: Request, yetkili
     # and it would look like a leg still in progress. Reports already skip such rows; this
     # keeps the table clean.
     try:
-        supabase.table("gorev_etaplari").update({"iptal_edildi": True}).eq(
-            "talep_id", bilgi.talep_id).is_("gercek_varis", "null").execute()
+        await run_query(supabase.table("gorev_etaplari").update({"iptal_edildi": True}).eq(
+            "talep_id", bilgi.talep_id).is_("gercek_varis", "null"))
     except Exception as e:
         sentry_sdk.capture_message(f"ETAP İPTAL İŞARETLENEMEDİ: talep={bilgi.talep_id} | {str(e)[:200]}",
                                    level="warning")
@@ -5654,10 +5665,10 @@ async def vale_gorev_iptal(bilgi: ValeGorevIptalIstek, request: Request, yetkili
     # would show as busy on the panels and in the counters. Only reset when no other active
     # task remains (older data can have more than one).
     if kayit.get("arac_id"):
-        kalan_aktif = supabase.table("talepler").select("id").eq(
-            "arac_id", kayit["arac_id"]).in_("durum", VALE_AKTIF_DURUMLAR).limit(1).execute().data
+        kalan_aktif = (await run_query(supabase.table("talepler").select("id").eq(
+            "arac_id", kayit["arac_id"]).in_("durum", VALE_AKTIF_DURUMLAR).limit(1))).data
         if not kalan_aktif:
-            supabase.table("araclar").update({"durum": "MERKEZDE"}).eq("id", kayit["arac_id"]).execute()
+            await run_query(supabase.table("araclar").update({"durum": "MERKEZDE"}).eq("id", kayit["arac_id"]))
 
     await audit_log_yaz(
         yapan=yetkili, eylem="VALE_GOREV_IPTAL", hedef_tip="TALEP", hedef_id=bilgi.talep_id,
@@ -5676,7 +5687,7 @@ async def vale_gorev_iptal(bilgi: ValeGorevIptalIstek, request: Request, yetkili
 
 
 @app.get("/vale-gorevi")
-async def vale_gorevi_getir(lat: float = None, lng: float = None, yetkili = Depends(yetki_kontrol)):
+def vale_gorevi_getir(lat: float = None, lng: float = None, yetkili = Depends(yetki_kontrol)):
     """Valet app poll: the valet's current task (a single one), plus the base point when needed.
 
     Also stores the valet's position, which keeps the customer's ETA fresh.
@@ -5747,7 +5758,7 @@ class AnketGonderIstek(BaseModel):
 
 @app.post("/anket-gonder")
 @limiter.limit("5/minute")   # against token guessing and repeated submissions
-async def anket_gonder(bilgi: AnketGonderIstek, request: Request):
+def anket_gonder(bilgi: AnketGonderIstek, request: Request):
     """Customer page: submit the survey for a completed valet delivery, once, within the window."""
     def _puan_gecerli(p, zorunlu=False):
         if p is None:
