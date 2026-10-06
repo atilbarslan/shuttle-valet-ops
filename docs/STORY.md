@@ -34,7 +34,7 @@ As my hope was running out, a friend pointed me to logistics. Freight companies 
 
 ## Shutting it down
 
-Early on, because I believed in the project, I applied to Ege Teknopark in İzmir. Access to their R&D application portal took months, so the full application went in in July 2026 with a two-year R&D plan: personalising arrival-time predictions with each driver's behaviour, and re-planning routes during the day without breaking times already promised to passengers. The project was accepted, and the contract was due in October. But with no revenue — only one or two companies keen on a free trial — I decided not to found the company and did not sign.
+Early on, because I believed in the project, I applied to Ege Teknopark in İzmir. Access to their R&D application portal took months, so the full application went in in the summer of 2026 with a two-year R&D plan: personalising arrival-time predictions with each driver's behaviour, and re-planning routes during the day without breaking times already promised to passengers. The project was accepted, and the contract was due in October. But with no revenue — only one or two companies keen on a free trial — I decided not to found the company and did not sign.
 
 In total I talked to more than 50 companies across automotive dealerships, insurance, roadside assistance and freight. None of them paid. In October 2026 I shut the product down.
 

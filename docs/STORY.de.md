@@ -34,7 +34,7 @@ Als meine Hoffnung schwand, wies mich ein Freund auf die Logistik hin. Transport
 
 ## Die Einstellung
 
-Schon früh bewarb ich mich, weil ich an das Projekt glaubte, beim Ege Teknopark in İzmir. Der Zugang zu dessen F&E-Antragsportal dauerte Monate, sodass der vollständige Antrag im Juli 2026 eingereicht wurde, mit einem zweijährigen F&E-Plan: Ankunftszeitprognosen anhand des Verhaltens jedes einzelnen Fahrers zu personalisieren und Routen im Tagesverlauf neu zu planen, ohne den Fahrgästen bereits zugesagte Zeiten zu brechen. Das Projekt wurde angenommen, und der Vertrag stand im Oktober an. Doch ohne Einnahmen – nur ein, zwei Unternehmen hatten Interesse an einem kostenlosen Test – beschloss ich, die Firma nicht zu gründen, und unterschrieb nicht.
+Schon früh bewarb ich mich, weil ich an das Projekt glaubte, beim Ege Teknopark in İzmir. Der Zugang zu dessen F&E-Antragsportal dauerte Monate, sodass der vollständige Antrag im Sommer 2026 eingereicht wurde, mit einem zweijährigen F&E-Plan: Ankunftszeitprognosen anhand des Verhaltens jedes einzelnen Fahrers zu personalisieren und Routen im Tagesverlauf neu zu planen, ohne den Fahrgästen bereits zugesagte Zeiten zu brechen. Das Projekt wurde angenommen, und der Vertrag stand im Oktober an. Doch ohne Einnahmen – nur ein, zwei Unternehmen hatten Interesse an einem kostenlosen Test – beschloss ich, die Firma nicht zu gründen, und unterschrieb nicht.
 
 Insgesamt sprach ich mit mehr als 50 Unternehmen aus den Bereichen Autohäuser, Versicherungen, Pannenhilfe und Güterverkehr. Keines von ihnen hat bezahlt. Im Oktober 2026 habe ich das Produkt eingestellt.
 
