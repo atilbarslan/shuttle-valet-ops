@@ -81,13 +81,15 @@ location permission.
   the database is an in-memory client (`tests/fakes.py`) that imitates the behaviour the code relies
   on: filters, conditional updates and the rows a write returns. Constraints, triggers and SQL types
   are not exercised.
-- **No CI/CD.** Deployment was manual: files were copied to the server and the service was restarted.
+- **CI, but no CD.** Every pull request and every push to `main` runs `ruff` and `pytest` on GitHub
+  Actions. Deployment was manual: files were copied to the server and the service was restarted.
 - **Three flows are not atomic** (see [Consistency](ARCHITECTURE.md#consistency-idempotency-instead-of-atomicity)).
   Full atomicity would need stored procedures.
 - **There is duplicated code:** the valet cancellation rules are defined on the server and in the
   scripts of two panels, and the transition order again in the valet screen's buttons; the driver's
   route and the passenger order are computed in two separate places on the server; the time display
-  function is identical in four files. Part of this is the price of having no build step. When
+  function is identical in four files; and each page's CSS is embedded in its own HTML file, so
+  shared styles are repeated instead of living in one stylesheet. Part of this is the price of having no build step. When
   changing any of them, all must change together; these places are marked in the code.
 - **A `401` on the first send is not queued.** The queue rule says `401` stays in the queue, and that
   is what happens when the queue is flushed. But if the session has expired when an operation is first
@@ -105,3 +107,17 @@ location permission.
   the quota checks read first and write afterwards, so two requests arriving at the same moment can
   both pass. The critical status changes are protected by a condition in the update itself, but
   these are not; a partial unique index or a constraint would be the proper fix.
+- **Some state lives in process memory, which assumes a single worker.** The WebSocket connection
+  registry, the 30-second auth cache and the rate limiter's counters are kept in the memory of the
+  server process. With several uvicorn workers, a broadcast sent from one worker would not reach
+  clients connected to another; a token revoked on one worker (logout, company deactivation) could
+  still be accepted for up to 30 seconds from another worker's cache; and each worker would count
+  rate limits on its own, so the effective limit would grow with the number of workers. The proper
+  fix is Redis Pub/Sub for broadcasts and cache invalidation, and Redis as the limiter's storage.
+- **Company isolation is checked in each endpoint separately.** The reason is in
+  [Security and privacy](SECURITY-PRIVACY.md#company-isolation): each kind of resource is tied to
+  its company in a different way. The price is that the check can be forgotten in one endpoint, and
+  the audit found exactly that. A sturdier approach would be a shared FastAPI dependency that
+  resolves the company of the requested resource and rejects a mismatch before the endpoint runs,
+  or Postgres row level security policies (which would also mean the backend no longer connects with
+  the key that bypasses them).

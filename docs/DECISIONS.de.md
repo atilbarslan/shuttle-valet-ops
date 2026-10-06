@@ -86,15 +86,17 @@ Standortfreigabe widerrufen hat.
   auf, aber die Datenbank ist ein In-Memory-Client (`tests/fakes.py`), der das Verhalten nachbildet,
   auf das sich der Code verlässt: Filter, bedingte Updates und die Zeilen, die ein Schreibvorgang
   zurückgibt. Constraints, Trigger und SQL-Typen werden nicht geprüft.
-- **Kein CI/CD.** Die Auslieferung war manuell: Dateien wurden auf den Server kopiert und der Dienst
-  neu gestartet.
+- **CI, aber kein CD.** Jeder Pull Request und jeder Push auf `main` führt `ruff` und `pytest` in
+  GitHub Actions aus. Die Auslieferung war manuell: Dateien wurden auf den Server kopiert und der
+  Dienst neu gestartet.
 - **Drei Abläufe sind nicht atomar** (siehe [Konsistenz](ARCHITECTURE.de.md#konsistenz-idempotenz-statt-atomarität)).
   Volle Atomarität bräuchte Stored Procedures.
 - **Es gibt doppelten Code:** Die Valet-Stornierungsregeln sind auf dem Server und in den Skripten
   zweier Panels definiert, die Übergangsreihenfolge zusätzlich in den Schaltflächen des
   Valet-Bildschirms; die Route des Fahrers und die Reihenfolge der Fahrgäste werden an zwei
   getrennten Stellen auf dem Server berechnet; die Funktion zur Zeitanzeige ist in vier Dateien
-  identisch. Ein Teil davon ist der Preis für den fehlenden Build-Schritt. Bei einer Änderung müssen
+  identisch; und das CSS jeder Seite steckt in ihrer eigenen HTML-Datei, sodass gemeinsame Stile
+  wiederholt werden, statt in einem Stylesheet zu stehen. Ein Teil davon ist der Preis für den fehlenden Build-Schritt. Bei einer Änderung müssen
   alle Stellen gemeinsam geändert werden; sie sind im Code markiert.
 - **Ein `401` beim ersten Senden kommt nicht in die Warteschlange.** Die Regel sagt, dass `401` in
   der Warteschlange bleibt, und beim Leeren der Warteschlange geschieht das auch. Ist die Sitzung aber
@@ -116,3 +118,18 @@ Standortfreigabe widerrufen hat.
   eintreffende Anfragen beide durchkommen können. Die kritischen Statusänderungen sind durch eine
   Bedingung im Update selbst geschützt, diese Regeln nicht; ein partieller eindeutiger Index oder
   ein Constraint wäre die richtige Lösung.
+- **Ein Teil des Zustands liegt im Prozessspeicher und setzt einen einzigen Worker voraus.** Die
+  Liste der WebSocket-Verbindungen, der 30-Sekunden-Auth-Cache und die Zähler des Anfragelimits
+  liegen im Speicher des Serverprozesses. Mit mehreren uvicorn-Workern würde eine Nachricht, die ein
+  Worker sendet, die Clients eines anderen Workers nicht erreichen; ein auf einem Worker widerrufenes
+  Token (Abmeldung, Deaktivierung der Firma) könnte aus dem Cache eines anderen Workers noch bis zu
+  30 Sekunden akzeptiert werden; und jeder Worker würde die Anfragelimits für sich zählen, sodass das
+  tatsächliche Limit mit der Zahl der Worker wüchse. Die richtige Lösung ist Redis Pub/Sub für
+  Nachrichten und Cache-Invalidierung sowie Redis als Speicher für das Anfragelimit.
+- **Die Mandantentrennung wird in jedem Endpunkt einzeln geprüft.** Die Begründung steht unter
+  [Sicherheit und Datenschutz](SECURITY-PRIVACY.de.md#mandantentrennung): Jede Art von Ressource ist
+  auf andere Weise an ihre Firma gebunden. Der Preis ist, dass die Prüfung in einem Endpunkt
+  vergessen werden kann, und genau das hat das Audit gefunden. Robuster wäre eine gemeinsame
+  FastAPI-Abhängigkeit, die die Firma der angefragten Ressource ermittelt und eine Abweichung ablehnt,
+  bevor der Endpunkt läuft, oder Row-Level-Security-Richtlinien in Postgres (wofür das Backend sich
+  auch nicht mehr mit dem Schlüssel verbinden dürfte, der sie umgeht).
