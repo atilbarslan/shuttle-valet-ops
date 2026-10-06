@@ -86,8 +86,9 @@ Standortfreigabe widerrufen hat.
   auf, aber die Datenbank ist ein In-Memory-Client (`tests/fakes.py`), der das Verhalten nachbildet,
   auf das sich der Code verlässt: Filter, bedingte Updates und die Zeilen, die ein Schreibvorgang
   zurückgibt. Constraints, Trigger und SQL-Typen werden nicht geprüft.
-- **Kein CI/CD.** Die Auslieferung war manuell: Dateien wurden auf den Server kopiert und der Dienst
-  neu gestartet.
+- **CI, aber kein CD.** Jeder Pull Request und jeder Push auf `main` führt `ruff` und `pytest` in
+  GitHub Actions aus. Die Auslieferung war manuell: Dateien wurden auf den Server kopiert und der
+  Dienst neu gestartet.
 - **Drei Abläufe sind nicht atomar** (siehe [Konsistenz](ARCHITECTURE.de.md#konsistenz-idempotenz-statt-atomarität)).
   Volle Atomarität bräuchte Stored Procedures.
 - **Es gibt doppelten Code:** Die Valet-Stornierungsregeln sind auf dem Server und in den Skripten

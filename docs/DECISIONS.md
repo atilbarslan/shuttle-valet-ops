@@ -81,7 +81,8 @@ location permission.
   the database is an in-memory client (`tests/fakes.py`) that imitates the behaviour the code relies
   on: filters, conditional updates and the rows a write returns. Constraints, triggers and SQL types
   are not exercised.
-- **No CI/CD.** Deployment was manual: files were copied to the server and the service was restarted.
+- **CI, but no CD.** Every pull request and every push to `main` runs `ruff` and `pytest` on GitHub
+  Actions. Deployment was manual: files were copied to the server and the service was restarted.
 - **Three flows are not atomic** (see [Consistency](ARCHITECTURE.md#consistency-idempotency-instead-of-atomicity)).
   Full atomicity would need stored procedures.
 - **There is duplicated code:** the valet cancellation rules are defined on the server and in the
