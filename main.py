@@ -9,13 +9,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from supabase import create_client, Client
 import uuid
-import requests
 from datetime import datetime, timedelta, timezone
 import math
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
 import bcrypt
 import html
 import re
@@ -389,7 +386,7 @@ async def websocket_endpoint(websocket: WebSocket):
     except WebSocketDisconnect:
         # The client went away before sending its token (for example, the phone locked at once).
         pass
-    except Exception as e:
+    except Exception:
         # A real error: clean up, close the socket if it is still open, then re-raise so
         # Sentry records it.
         manager.disconnect(websocket)
@@ -1439,7 +1436,6 @@ async def mail_gonder(hedef_mail, kullanici_adi, link, firma_adi, marka, rol="AD
         # Escape every user-supplied value that goes into the HTML body.
         safe_kullanici = html.escape(kullanici_adi or "")
         safe_firma = html.escape(firma_adi or "")
-        safe_marka = html.escape(marka or "")
         safe_vurgu = html.escape(rol_bilgi["vurgu"])
         safe_aciklama = html.escape(rol_bilgi["aciklama"])
         rol_renk = rol_bilgi["renk"]
