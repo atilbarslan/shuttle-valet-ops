@@ -1,0 +1,4 @@
+# Lint for real errors only: syntax errors (E9) and pyflakes checks (F), such as undefined
+# names and unused imports or variables. Style rules are deliberately left off.
+[lint]
+select = ["E9", "F"]
