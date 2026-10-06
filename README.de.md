@@ -143,7 +143,7 @@ Die Oberfläche ist auf Türkisch. Die Bildschirmfotos stammen aus der Live-Vers
 ```
 main.py                Das gesamte Backend: Endpunkte, Authentifizierung, Hilfsfunktionen
 requirements.txt
-requirements-dev.txt   Testabhängigkeit (pytest)
+requirements-dev.txt   Entwicklungswerkzeuge: pytest, ruff, fakeredis
 tests/                 Unit- und Endpunkt-Tests (In-Memory-Datenbank, fakeredis)
 frontend/
   <seite>.html         Eine Seite pro Rolle
@@ -155,6 +155,8 @@ frontend/
   libs/purify.min.js
   fonts/
 db/                    Basisschema, Migrationen und geplante Jobs (SQL)
+scripts/load_test.py   Kleiner Lasttest (siehe docs/PERFORMANCE.md)
+docs/                  Performance-Notizen und Bildschirmfotos
 ```
 
 Die Seiten sind nach Rollen getrennt: Super-Admin, Unternehmens-Admin, Disposition,
@@ -682,12 +684,22 @@ neuen Text erteilt worden.
   der Warteschlange bleibt, und beim Leeren der Warteschlange geschieht das auch. Ist die Sitzung aber
   beim ersten Senden eines Vorgangs bereits abgelaufen, leiten beide Feldbildschirme den Nutzer zur
   Anmeldung weiter, und dieser Vorgang kann verloren gehen.
-- **Zwei Audit-Befunde wurden zurückgestellt:**
-  - Der Endpunkt zum Starten einer Route ändert den Zustand, wird aber mit `GET` aufgerufen. Da die
-    Authentifizierung über ein `Bearer`-Token statt über ein Cookie läuft, entsteht dadurch keine
-    CSRF-Lücke; die Umstellung auf `POST` wurde zurückgestellt, weil Client und Server gemeinsam
-    geändert werden müssen. Eine Koordinatenprüfung wurde ergänzt.
-  - Der Datenbank-Client arbeitet synchron; seine Auswirkung unter Last wurde nicht gemessen.
+- **Ein Audit-Befund wurde zurückgestellt:** Der Endpunkt zum Starten einer Route ändert den
+  Zustand, wird aber mit `GET` aufgerufen. Da die Authentifizierung über ein `Bearer`-Token statt
+  über ein Cookie läuft, entsteht dadurch keine CSRF-Lücke; die Umstellung auf `POST` wurde
+  zurückgestellt, weil Client und Server gemeinsam geändert werden müssen. Eine Koordinatenprüfung
+  wurde ergänzt.
+- **Der Datenbank-Client ist synchron.** Seine Abfragen laufen jetzt in einem Thread-Pool und
+  blockieren die Event-Loop nicht mehr; bei 50 gleichzeitigen Anfragen und simulierten 50 ms pro
+  Abfrage stieg der Durchsatz von etwa 3-5 auf etwa 90-145 Anfragen pro Sekunde. Eine einzelne
+  Anfrage wurde durch den Wechsel in den Thread etwa 5 % langsamer. Der asynchrone Supabase-Client
+  würde diesen Wechsel überflüssig machen. Methode, Bedingungen und Grenzen der Messung:
+  [docs/PERFORMANCE.md](docs/PERFORMANCE.md).
+- **Einige Prüfen-dann-Schreiben-Regeln sichert die Datenbank nicht ab.** „Ein aktiver Auftrag pro
+  Valet“ und die Kontingentprüfungen lesen zuerst und schreiben danach, sodass zwei gleichzeitig
+  eintreffende Anfragen beide durchkommen können. Die kritischen Statusänderungen sind durch eine
+  Bedingung im Update selbst geschützt, diese Regeln nicht; ein partieller eindeutiger Index oder
+  ein Constraint wäre die richtige Lösung.
 
 ---
 

@@ -140,7 +140,7 @@ The interface is in Turkish. The screenshots were taken from the live version, w
 ```
 main.py                The whole backend: endpoints, authentication, helpers
 requirements.txt
-requirements-dev.txt   Test dependency (pytest)
+requirements-dev.txt   Development tools: pytest, ruff, fakeredis
 tests/                 Unit tests and endpoint tests (in-memory database, fakeredis)
 frontend/
   <page>.html          One page per role
@@ -152,6 +152,8 @@ frontend/
   libs/purify.min.js
   fonts/
 db/                    Base schema, migrations and scheduled jobs (SQL)
+scripts/load_test.py   Small load test (see docs/PERFORMANCE.md)
+docs/                  Performance notes and screenshots
 ```
 
 Pages are split by role: super admin, company admin, operations, desk agent, driver, valet,
@@ -635,11 +637,19 @@ as if they were given to the new text.
 - **A `401` on the first send is not queued.** The queue rule says `401` stays in the queue, and that
   is what happens when the queue is flushed. But if the session has expired when an operation is first
   sent, both field screens redirect the user to the login screen and that operation may be lost.
-- **Two audit findings were deferred:**
-  - The route start endpoint changes state but is called with `GET`. Since authentication uses a
-    `Bearer` token rather than a cookie, this does not create a CSRF hole; moving to `POST` was
-    deferred because it requires changing client and server together. Coordinate validation was added.
-  - The database client runs synchronously; its effect under load has not been measured.
+- **One audit finding was deferred:** the route start endpoint changes state but is called with
+  `GET`. Since authentication uses a `Bearer` token rather than a cookie, this does not create a
+  CSRF hole; moving to `POST` was deferred because it requires changing client and server together.
+  Coordinate validation was added.
+- **The database client is synchronous.** Its queries now run in a thread pool, so they no longer
+  block the event loop; with 50 requests in flight and a simulated 50 ms per query, throughput rose
+  from about 3-5 to about 90-145 requests per second. A single request got about 5% slower because
+  of the thread hop. The async Supabase client would remove that hop. Method, conditions and limits
+  of the measurement: [docs/PERFORMANCE.md](docs/PERFORMANCE.md).
+- **Some check-then-act rules are not enforced by the database.** "One active task per valet" and
+  the quota checks read first and write afterwards, so two requests arriving at the same moment can
+  both pass. The critical status changes are protected by a condition in the update itself, but
+  these are not; a partial unique index or a constraint would be the proper fix.
 
 ---
 
