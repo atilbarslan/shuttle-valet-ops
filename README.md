@@ -1,5 +1,7 @@
 # Shuttle & Valet Ops
 
+[![CI](https://github.com/atilbarslan/shuttle-valet-ops/actions/workflows/ci.yml/badge.svg)](https://github.com/atilbarslan/shuttle-valet-ops/actions/workflows/ci.yml)
+
 Built by Atıl Arslan under the Paxroute name, 2026.
 
 **English** · [Deutsch](README.de.md)
