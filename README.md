@@ -141,7 +141,7 @@ The interface is in Turkish. The screenshots were taken from the live version, w
 main.py                The whole backend: endpoints, authentication, helpers
 requirements.txt
 requirements-dev.txt   Test dependency (pytest)
-tests/                 Tests for the pure helper functions and rule tables
+tests/                 Unit tests and endpoint tests (in-memory database, fakeredis)
 frontend/
   <page>.html          One page per role
   js/<page>.js         That page's only script
@@ -616,9 +616,14 @@ as if they were given to the new text.
 ## Known limitations
 
 - **The backend is a single file.** It was not split because there was no second developer.
-- **Test coverage is narrow.** The small pytest suite in `tests/` covers only the pure helper
-  functions and rule tables. Endpoints and the flows that write to the database were tested by hand
-  on the running system and have no automated tests.
+- **Test coverage is partial.** `tests/` has unit tests for the pure helper functions and rule
+  tables, and endpoint tests for three critical flows: valet status transitions (including two
+  simultaneous requests), company isolation and token revocation. The other endpoints were tested by
+  hand on the running system.
+- **The integration tests do not run against Postgres.** They call the real endpoints over HTTP, but
+  the database is an in-memory client (`tests/fakes.py`) that imitates the behaviour the code relies
+  on: filters, conditional updates and the rows a write returns. Constraints, triggers and SQL types
+  are not exercised.
 - **No CI/CD.** Deployment was manual: files were copied to the server and the service was restarted.
 - **Three flows are not atomic** (see [Consistency](#consistency-idempotency-instead-of-atomicity)).
   Full atomicity would need stored procedures.
@@ -682,9 +687,10 @@ limits and the audit and consent logs use it.
 Error monitoring is optional: it is enabled if `SENTRY_DSN` is set and disabled otherwise.
 
 Tests: `pip install -r requirements-dev.txt`, then `pytest`. They use dummy settings and need no
-database, Redis or external service. They cover distance, input validation, the role hierarchy,
-customer link lifetimes, the valet state machine and its cancellation rule, token lifetimes and
-password hashing.
+database, Redis or external service: Supabase is replaced by an in-memory client and Redis by
+fakeredis. Unit tests cover distance, input validation, the role hierarchy, customer link lifetimes,
+the valet state machine and its cancellation rule, token lifetimes and password hashing. Endpoint
+tests cover valet status transitions, company isolation and token revocation.
 
 ---
 

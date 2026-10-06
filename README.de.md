@@ -144,7 +144,7 @@ Die Oberfläche ist auf Türkisch. Die Bildschirmfotos stammen aus der Live-Vers
 main.py                Das gesamte Backend: Endpunkte, Authentifizierung, Hilfsfunktionen
 requirements.txt
 requirements-dev.txt   Testabhängigkeit (pytest)
-tests/                 Tests für die reinen Hilfsfunktionen und Regeltabellen
+tests/                 Unit- und Endpunkt-Tests (In-Memory-Datenbank, fakeredis)
 frontend/
   <seite>.html         Eine Seite pro Rolle
   js/<seite>.js        Das einzige Skript dieser Seite
@@ -660,9 +660,14 @@ neuen Text erteilt worden.
 
 - **Das Backend ist eine einzige Datei.** Es wurde nicht aufgeteilt, weil es keinen zweiten
   Entwickler gab.
-- **Die Testabdeckung ist schmal.** Die kleine pytest-Suite in `tests/` deckt nur die reinen
-  Hilfsfunktionen und Regeltabellen ab. Endpunkte und die Abläufe, die in die Datenbank schreiben,
-  wurden von Hand am laufenden System getestet und haben keine automatisierten Tests.
+- **Die Testabdeckung ist unvollständig.** `tests/` enthält Unit-Tests für die reinen
+  Hilfsfunktionen und Regeltabellen sowie Endpunkt-Tests für drei kritische Abläufe: die
+  Valet-Statusübergänge (einschließlich zweier gleichzeitiger Anfragen), die Mandantentrennung und den
+  Token-Widerruf. Die übrigen Endpunkte wurden von Hand am laufenden System getestet.
+- **Die Integrationstests laufen nicht gegen Postgres.** Sie rufen die echten Endpunkte über HTTP
+  auf, aber die Datenbank ist ein In-Memory-Client (`tests/fakes.py`), der das Verhalten nachbildet,
+  auf das sich der Code verlässt: Filter, bedingte Updates und die Zeilen, die ein Schreibvorgang
+  zurückgibt. Constraints, Trigger und SQL-Typen werden nicht geprüft.
 - **Kein CI/CD.** Die Auslieferung war manuell: Dateien wurden auf den Server kopiert und der Dienst
   neu gestartet.
 - **Drei Abläufe sind nicht atomar** (siehe [Konsistenz](#konsistenz-idempotenz-statt-atomarität)).
@@ -733,9 +738,11 @@ wo die Anfragelimits sowie das Audit- und das Einwilligungslog sie verwenden.
 Das Fehler-Monitoring ist optional: Es ist aktiv, wenn `SENTRY_DSN` gesetzt ist, sonst abgeschaltet.
 
 Tests: `pip install -r requirements-dev.txt`, danach `pytest`. Sie verwenden Platzhalter-Einstellungen
-und brauchen weder Datenbank noch Redis noch einen externen Dienst. Sie decken Entfernungen,
-Eingabeprüfung, die Rollenhierarchie, die Lebensdauer von Kundenlinks, den Valet-Zustandsautomaten mit
-seiner Stornierungsregel, Token-Lebensdauern und Passwort-Hashing ab.
+und brauchen weder Datenbank noch Redis noch einen externen Dienst: Supabase wird durch einen
+In-Memory-Client ersetzt, Redis durch fakeredis. Die Unit-Tests decken Entfernungen, Eingabeprüfung,
+die Rollenhierarchie, die Lebensdauer von Kundenlinks, den Valet-Zustandsautomaten mit seiner
+Stornierungsregel, Token-Lebensdauern und Passwort-Hashing ab. Die Endpunkt-Tests decken die
+Valet-Statusübergänge, die Mandantentrennung und den Token-Widerruf ab.
 
 ---
 
