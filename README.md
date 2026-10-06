@@ -59,11 +59,12 @@ work going when the connection drops in the field, and the
 10. [Consistency: idempotency instead of atomicity](#consistency-idempotency-instead-of-atomicity)
 11. [Performance: cutting Redis traffic](#performance-cutting-redis-traffic)
 12. [Security](#security)
-13. [KVKK: data hygiene from day one](#kvkk-data-hygiene-from-day-one)
-14. [What it does not do](#what-it-does-not-do)
-15. [Known limitations](#known-limitations)
-16. [Setup](#setup)
-17. [License](#license)
+13. [Failure handling: what fails open and what fails closed](#failure-handling-what-fails-open-and-what-fails-closed)
+14. [KVKK: data hygiene from day one](#kvkk-data-hygiene-from-day-one)
+15. [What it does not do](#what-it-does-not-do)
+16. [Known limitations](#known-limitations)
+17. [Setup](#setup)
+18. [License](#license)
 
 ---
 
@@ -560,6 +561,44 @@ written to the screen, and email bodies are HTML-escaped.
 
 The login and password-setting endpoints are protected with per-minute request limits; so are the
 main endpoints of the customer page. Tokens in customer links are 128-bit random values.
+
+---
+
+## Failure handling: what fails open and what fails closed
+
+When Redis or the database cannot be reached, some checks let the request through (fail open)
+and some stop it (fail closed). The choice depends on what is lost in each direction.
+
+| Check | When its data cannot be read | Reason |
+|---|---|---|
+| Token revoked by logout | Open: the token is accepted | Field staff must not all be locked out by an outage |
+| User cutoff after a password reset or deletion | Open: the token is accepted | Same |
+| Cutoff time that cannot be parsed | Open: the token is accepted | Same |
+| Logout | Open: answers "logged out" even if the revocation could not be stored | The app discards the token anyway |
+| Company active or inactive | Redis down: the database is read. Database down too: the request fails with an error. A company that no longer exists counts as inactive | No outage reason to serve an unpaid company |
+| Customer link lifetime with an unreadable date | Open: the link works | A wrong date must not lock the customer out of their own task |
+| Consent record before a location is stored | Closed: no location is stored | The data controller must be able to prove consent |
+| Whether a company requires consent | Closed: consent is asked for | The safe default is to ask |
+| Invitation link with an unreadable date | Closed: the link is refused | A new invitation is cheap |
+| Refusal and withdrawal of consent | Open: the refusal or the erasure goes ahead | A logging error must not block the customer's right |
+| Audit log, punctuality milestones | Open: the action goes ahead | Records, not gates |
+
+**Why the token checks fail open.** The people who would be locked out are drivers and valets in
+the middle of a job; an infrastructure outage would stop every company's operation at once.
+The exposure is limited: every token is signed and expires (24 hours for office roles, 7 days for
+field roles), role and company checks do not depend on these stores, and the gap only exists while
+the database is unreachable and Redis holds no cached answer for that token. The risk is that a
+logged-out or stolen token keeps working during that time.
+
+**Why consent fails closed.** Under KVKK the burden of proof is on the data controller. A location
+stored without a consent record counts as processing without consent, so the worst allowed outcome
+is "consent recorded, no location", never the other way round.
+
+**In a domain such as banking** the token checks would fail closed: an unknown revocation status
+would mean "deny", tokens would live minutes rather than days and be renewed with refresh tokens,
+revocation would sit in a highly available store with alerting, and logout would report a failure
+instead of claiming success. Locking users out during an outage is an accepted cost there, because
+a misused session moves money.
 
 ---
 
