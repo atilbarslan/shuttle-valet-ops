@@ -40,7 +40,7 @@ DUMMY_ENV = {
 
 # Server process ---------------------------------------------------------------------------
 
-def serve(port, latency_ms, info_path):
+def serve(port, latency_ms, info_path, threads=None):
     os.environ.update(DUMMY_ENV)
     sys.path[:0] = [ROOT, os.path.join(ROOT, "tests")]
 
@@ -68,6 +68,14 @@ def serve(port, latency_ms, info_path):
     db.table("araclar").update({
         "son_lat": 38.40, "son_lng": 27.10, "son_hareket_zamani": task["kayit_tarihi"],
     }).eq("id", company.valet_vehicle_id).execute()
+
+    if threads:
+        import anyio.to_thread
+
+        async def resize_thread_pool():
+            anyio.to_thread.current_default_thread_limiter().total_tokens = threads
+
+        main.app.router.on_startup.append(resize_thread_pool)
 
     db.latency = latency_ms / 1000  # seeding above ran without the delay
     with open(info_path, "w") as f:
@@ -145,6 +153,8 @@ def main():
     parser.add_argument("--latency-ms", type=float, default=50)
     parser.add_argument("--concurrency", type=int, default=50)
     parser.add_argument("--requests", type=int, default=500)
+    parser.add_argument("--threads", type=int,
+                        help="size of the server's thread pool (default: anyio's 40)")
     parser.add_argument("--json", help="also write the results to this file")
     parser.add_argument("--serve", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--port", type=int, help=argparse.SUPPRESS)
@@ -152,13 +162,16 @@ def main():
     args = parser.parse_args()
 
     if args.serve:
-        serve(args.port, args.latency_ms, args.info)
+        serve(args.port, args.latency_ms, args.info, args.threads)
         return
 
     port = free_port()
     info_path = os.path.join(tempfile.mkdtemp(), "info.json")
-    server = subprocess.Popen([sys.executable, __file__, "--serve", "--port", str(port),
-                               "--latency-ms", str(args.latency_ms), "--info", info_path])
+    command = [sys.executable, __file__, "--serve", "--port", str(port),
+               "--latency-ms", str(args.latency_ms), "--info", info_path]
+    if args.threads:
+        command += ["--threads", str(args.threads)]
+    server = subprocess.Popen(command)
     try:
         base = f"http://127.0.0.1:{port}"
         for _ in range(300):
@@ -179,7 +192,7 @@ def main():
         server.wait()
 
     print(f"latency {args.latency_ms:g} ms per query, {args.concurrency} in flight, "
-          f"{args.requests} requests per endpoint")
+          f"{args.requests} requests per endpoint, thread pool {args.threads or 'default (40)'}")
     print(f"{'endpoint':42} {'p50 ms':>8} {'p95 ms':>8} {'req/s':>8} {'errors':>7}")
     for name, r in results.items():
         print(f"{name:42} {r['p50_ms']:>8} {r['p95_ms']:>8} {r['rps']:>8} {r['errors']:>7}")
