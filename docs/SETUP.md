@@ -24,6 +24,15 @@ cp .env.example .env    # fill in the values
 uvicorn main:app --reload
 ```
 
+Dependencies come in two files: `requirements.in` lists only the packages the code imports
+directly, and `requirements.txt` is the lock file compiled from it with pip-tools, pinning every
+package including indirect ones; install from the lock file. Some indirect packages look unrelated:
+`pyiceberg`, for example, comes in through `supabase` → `storage3`. To change or update a
+dependency, edit `requirements.in` and run `pip-compile --strip-extras requirements.in`
+(`pip install pip-tools`; add `--upgrade` for newer versions). `requirements-dev.in` and
+`requirements-dev.txt` work the same way for the test tools; compile them after `requirements.txt`,
+since they are constrained to its versions.
+
 `.env` expects the JWT signing key, the database, Redis, map and email provider keys, and the
 application's address (`BASE_URL`); each is explained in `.env.example`. If one is missing, the
 server does not start. If `BASE_URL` starts with `https://`, the application runs in production mode
