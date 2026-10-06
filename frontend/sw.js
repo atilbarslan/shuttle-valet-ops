@@ -13,6 +13,7 @@ const CACHE_VERSION = 'app-v1';
 const CACHE_ASSETS = [
     '/sofor.html',
     '/vale.html',
+    '/js/sofor.js',
     '/js/vale.js',
     '/libs/purify.min.js',
     '/libs/purify.min.js.map',
