@@ -1,0 +1,7 @@
+# Packages the tests and scripts/ import directly. requirements-dev.txt is compiled from this file;
+# the constraint keeps shared packages at the versions in requirements.txt.
+-c requirements.txt
+anyio
+fakeredis
+pytest
+ruff
