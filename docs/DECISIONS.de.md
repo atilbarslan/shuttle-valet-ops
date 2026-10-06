@@ -95,7 +95,8 @@ Standortfreigabe widerrufen hat.
   zweier Panels definiert, die Übergangsreihenfolge zusätzlich in den Schaltflächen des
   Valet-Bildschirms; die Route des Fahrers und die Reihenfolge der Fahrgäste werden an zwei
   getrennten Stellen auf dem Server berechnet; die Funktion zur Zeitanzeige ist in vier Dateien
-  identisch. Ein Teil davon ist der Preis für den fehlenden Build-Schritt. Bei einer Änderung müssen
+  identisch; und das CSS jeder Seite steckt in ihrer eigenen HTML-Datei, sodass gemeinsame Stile
+  wiederholt werden, statt in einem Stylesheet zu stehen. Ein Teil davon ist der Preis für den fehlenden Build-Schritt. Bei einer Änderung müssen
   alle Stellen gemeinsam geändert werden; sie sind im Code markiert.
 - **Ein `401` beim ersten Senden kommt nicht in die Warteschlange.** Die Regel sagt, dass `401` in
   der Warteschlange bleibt, und beim Leeren der Warteschlange geschieht das auch. Ist die Sitzung aber

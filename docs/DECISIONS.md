@@ -88,7 +88,8 @@ location permission.
 - **There is duplicated code:** the valet cancellation rules are defined on the server and in the
   scripts of two panels, and the transition order again in the valet screen's buttons; the driver's
   route and the passenger order are computed in two separate places on the server; the time display
-  function is identical in four files. Part of this is the price of having no build step. When
+  function is identical in four files; and each page's CSS is embedded in its own HTML file, so
+  shared styles are repeated instead of living in one stylesheet. Part of this is the price of having no build step. When
   changing any of them, all must change together; these places are marked in the code.
 - **A `401` on the first send is not queued.** The queue rule says `401` stays in the queue, and that
   is what happens when the queue is flushed. But if the session has expired when an operation is first
