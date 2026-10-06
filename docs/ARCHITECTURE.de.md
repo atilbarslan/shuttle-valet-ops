@@ -21,8 +21,10 @@ Zurück zur [README](../README.de.md).
 
 ```
 main.py                Das gesamte Backend: Endpunkte, Authentifizierung, Hilfsfunktionen
-requirements.txt
-requirements-dev.txt   Entwicklungswerkzeuge: pytest, ruff, fakeredis
+requirements.in        Direkte Abhängigkeiten
+requirements.txt       Lock-Datei, aus requirements.in erzeugt (pip-tools)
+requirements-dev.in    Entwicklungswerkzeuge: pytest, ruff, fakeredis, anyio
+requirements-dev.txt   Lock-Datei, aus requirements-dev.in erzeugt
 tests/                 Unit- und Endpunkt-Tests (In-Memory-Datenbank, fakeredis)
 frontend/
   <seite>.html         Eine Seite pro Rolle

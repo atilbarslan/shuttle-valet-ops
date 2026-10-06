@@ -1,0 +1,13 @@
+# Packages the application imports directly. requirements.txt is compiled from this file.
+bcrypt
+fastapi
+httpx
+pydantic
+PyJWT
+python-dotenv
+redis
+sentry-sdk
+slowapi
+starlette
+supabase
+uvicorn

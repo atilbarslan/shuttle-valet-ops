@@ -21,8 +21,10 @@ Back to the [README](../README.md).
 
 ```
 main.py                The whole backend: endpoints, authentication, helpers
-requirements.txt
-requirements-dev.txt   Development tools: pytest, ruff, fakeredis
+requirements.in        Direct dependencies
+requirements.txt       Lock file compiled from requirements.in (pip-tools)
+requirements-dev.in    Development tools: pytest, ruff, fakeredis, anyio
+requirements-dev.txt   Lock file compiled from requirements-dev.in
 tests/                 Unit tests and endpoint tests (in-memory database, fakeredis)
 frontend/
   <page>.html          One page per role
