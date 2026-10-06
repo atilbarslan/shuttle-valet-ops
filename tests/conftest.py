@@ -22,3 +22,45 @@ os.environ.update(_DUMMY_ENV)
 
 # The backend is a single module in the repository root.
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+
+# Integration test fixtures ----------------------------------------------------------------
+# The endpoint tests call the real FastAPI app over HTTP (httpx + ASGI transport). Only the
+# outside world is replaced: Supabase by the in-memory client in fakes.py, Redis by fakeredis,
+# and the Mapbox travel-time call by a fixed answer.
+import fakeredis  # noqa: E402
+import httpx  # noqa: E402
+import pytest  # noqa: E402
+
+from fakes import FakeSupabase  # noqa: E402
+
+
+@pytest.fixture
+def anyio_backend():
+    return "asyncio"
+
+
+@pytest.fixture
+def db(monkeypatch):
+    import main
+
+    fake = FakeSupabase()
+    monkeypatch.setattr(main, "supabase", fake)
+
+    async def fixed_route(*args, **kwargs):
+        return {"km": 4.2, "dakika": 11}
+
+    monkeypatch.setattr(main, "yol_mesafesi_verisi_async", fixed_route)
+    main._auth_cache.clear()
+    main.limiter.reset()
+    return fake
+
+
+@pytest.fixture
+async def client(db, monkeypatch):
+    import main
+
+    monkeypatch.setattr(main, "redis_client", fakeredis.FakeAsyncRedis(decode_responses=True))
+    transport = httpx.ASGITransport(app=main.app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as http:
+        yield http
