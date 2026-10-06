@@ -106,3 +106,10 @@ location permission.
   the quota checks read first and write afterwards, so two requests arriving at the same moment can
   both pass. The critical status changes are protected by a condition in the update itself, but
   these are not; a partial unique index or a constraint would be the proper fix.
+- **Some state lives in process memory, which assumes a single worker.** The WebSocket connection
+  registry, the 30-second auth cache and the rate limiter's counters are kept in the memory of the
+  server process. With several uvicorn workers, a broadcast sent from one worker would not reach
+  clients connected to another; a token revoked on one worker (logout, company deactivation) could
+  still be accepted for up to 30 seconds from another worker's cache; and each worker would count
+  rate limits on its own, so the effective limit would grow with the number of workers. The proper
+  fix is Redis Pub/Sub for broadcasts and cache invalidation, and Redis as the limiter's storage.

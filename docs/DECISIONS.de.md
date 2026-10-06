@@ -117,3 +117,11 @@ Standortfreigabe widerrufen hat.
   eintreffende Anfragen beide durchkommen können. Die kritischen Statusänderungen sind durch eine
   Bedingung im Update selbst geschützt, diese Regeln nicht; ein partieller eindeutiger Index oder
   ein Constraint wäre die richtige Lösung.
+- **Ein Teil des Zustands liegt im Prozessspeicher und setzt einen einzigen Worker voraus.** Die
+  Liste der WebSocket-Verbindungen, der 30-Sekunden-Auth-Cache und die Zähler des Anfragelimits
+  liegen im Speicher des Serverprozesses. Mit mehreren uvicorn-Workern würde eine Nachricht, die ein
+  Worker sendet, die Clients eines anderen Workers nicht erreichen; ein auf einem Worker widerrufenes
+  Token (Abmeldung, Deaktivierung der Firma) könnte aus dem Cache eines anderen Workers noch bis zu
+  30 Sekunden akzeptiert werden; und jeder Worker würde die Anfragelimits für sich zählen, sodass das
+  tatsächliche Limit mit der Zahl der Worker wüchse. Die richtige Lösung ist Redis Pub/Sub für
+  Nachrichten und Cache-Invalidierung sowie Redis als Speicher für das Anfragelimit.
