@@ -7,7 +7,7 @@
 // this value too (js/surum-kontrol.js) to show a "new version" banner, so a missing bump
 // also leaves open panel tabs unaware of the deploy. The driver screen displays it as the
 // app version.
-const CACHE_VERSION = 'app-v1';
+const CACHE_VERSION = 'app-v2';
 
 // Files cached at install time so the apps open even when offline.
 const CACHE_ASSETS = [
