@@ -39,6 +39,16 @@ down because it did not find customers. The server is off, so there is no live i
 repository was published with a clean history for security: the code was copied into a new
 repository, and the development history was not published.
 
+## How this was built
+
+It started at a car dealership's service centre. I had left my car for maintenance and taken their shuttle home. When the car was ready, I waited an hour at the pickup point while the driver and I called each other three times; he had come to the wrong street. On the way back he forgot a passenger and nearly had two accidents because he was on the phone the whole time. I asked him what it would be like if all of this ran through an app. "That would be great," he said, and that was the start.
+
+I built the shuttle module alone in about two months, one step at a time, testing each step before moving on. At that stage I used AI only to review my code. Going live was new to me, so there I used AI as a guide for choosing tools and setting up the server. Later I built the valet module on the same architecture with heavy AI assistance; it took one to two weeks instead of two months. The product decisions, the architecture and the trade-offs described here are mine, and so are the mistakes. AI tools also helped write much of this documentation.
+
+I talked to more than 50 companies — car dealerships, insurers, freight companies — and looked at school transport as well, but no one paid for it, and in October 2026 I shut it down. The full story, including what I got wrong commercially, is in [docs/STORY.md](docs/STORY.md). If you want to test any of this, ask me to walk through any part of the code.
+
+---
+
 ## Screenshots
 
 The interface is in Turkish. The screenshots were taken from the live version, which ran under the Paxroute name; the name and logo were removed from this code base. They show demo data; phone numbers and licence plates are blurred.
@@ -132,6 +142,7 @@ The database schema, scheduled jobs, privacy notice pages, production notes and 
 | [docs/SECURITY-PRIVACY.md](docs/SECURITY-PRIVACY.md) | Identity and isolation, security measures, what fails open and what fails closed, KVKK data handling |
 | [docs/SETUP.md](docs/SETUP.md) | Full setup: environment, database, privacy notice pages, production, tests |
 | [docs/PERFORMANCE.md](docs/PERFORMANCE.md) | Load test of the blocking database calls, before and after the fix |
+| [docs/STORY.md](docs/STORY.md) | How the project started and why it was shut down |
 
 Two good places to start: the [offline queue](docs/ARCHITECTURE.md#field-conditions-pwa-and-offline-queue) that keeps
 work going when the connection drops in the field, and the

@@ -41,6 +41,16 @@ abgeschaltet, daher gibt es keine Live-Instanz zum Ausprobieren. Das Repository 
 Sicherheitsgründen mit einer sauberen Historie veröffentlicht: Der Code wurde in ein neues
 Repository kopiert, die Entwicklungshistorie wurde nicht veröffentlicht.
 
+## Wie das entstanden ist
+
+Es begann im Servicezentrum eines Autohauses. Ich hatte mein Auto zur Wartung gebracht und war mit dem Shuttle des Hauses nach Hause gefahren. Als das Auto fertig war, wartete ich eine Stunde am Abholpunkt, während der Fahrer und ich uns dreimal anriefen; er war in die falsche Straße gefahren. Auf dem Rückweg vergaß er einen Fahrgast und hätte beinahe zwei Unfälle verursacht, weil er die ganze Zeit telefonierte. Ich fragte ihn, wie es wäre, wenn all das über eine App liefe. „Das wäre großartig“, sagte er, und so fing es an.
+
+Das Shuttle-Modul habe ich allein in etwa zwei Monaten gebaut, Schritt für Schritt, und jeden Schritt getestet, bevor ich weitermachte. In dieser Phase habe ich KI nur genutzt, um meinen Code zu prüfen. Der Live-Betrieb war neu für mich; dort habe ich KI als Wegweiser für die Wahl der Werkzeuge und das Einrichten des Servers genutzt. Später habe ich das Valet-Modul auf derselben Architektur mit starker KI-Unterstützung gebaut; es dauerte ein bis zwei Wochen statt zwei Monate. Die Produktentscheidungen, die Architektur und die hier beschriebenen Abwägungen stammen von mir, ebenso die Fehler. KI-Werkzeuge haben auch beim Schreiben eines großen Teils dieser Dokumentation geholfen.
+
+Ich habe mit mehr als 50 Unternehmen gesprochen – Autohäusern, Versicherern, Transportunternehmen – und mir auch den Schülertransport angesehen, aber niemand hat dafür bezahlt, und im Oktober 2026 habe ich es eingestellt. Die ganze Geschichte, einschließlich dessen, was ich geschäftlich falsch gemacht habe, steht in [docs/STORY.de.md](docs/STORY.de.md). Wenn Sie etwas davon überprüfen möchten, bitten Sie mich, Sie durch einen beliebigen Teil des Codes zu führen.
+
+---
+
 ## Bildschirmfotos
 
 Die Oberfläche ist auf Türkisch. Die Bildschirmfotos stammen aus der Live-Version, die unter dem Namen Paxroute lief; Name und Logo wurden aus dieser Codebasis entfernt. Sie zeigen Demodaten; Telefonnummern und Kennzeichen sind unkenntlich gemacht.
@@ -135,6 +145,7 @@ Datenbankschema, geplante Jobs, Seiten mit Datenschutzhinweisen, Hinweise für d
 | [docs/SECURITY-PRIVACY.de.md](docs/SECURITY-PRIVACY.de.md) | Identität und Trennung, Sicherheitsmaßnahmen, was bei Ausfall durchlässt und was sperrt, Umgang mit Daten nach dem KVKK |
 | [docs/SETUP.de.md](docs/SETUP.de.md) | Vollständige Einrichtung: Umgebung, Datenbank, Datenschutzseiten, Produktivbetrieb, Tests |
 | [docs/PERFORMANCE.md](docs/PERFORMANCE.md) | Lasttest der blockierenden Datenbankaufrufe, vor und nach der Korrektur (Englisch) |
+| [docs/STORY.de.md](docs/STORY.de.md) | Wie das Projekt begann und warum es eingestellt wurde |
 
 Zwei gute Einstiegspunkte: die [Offline-Warteschlange](docs/ARCHITECTURE.de.md#bedingungen-im-feld-pwa-und-offline-warteschlange),
 die die Arbeit weiterlaufen lässt, wenn im Feld die Verbindung abreißt, und der
