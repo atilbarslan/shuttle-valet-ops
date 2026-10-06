@@ -9,7 +9,9 @@ and limit), with the semantics the code relies on:
 - filters are applied atomically together with the write, so a conditional update such as
   `.update(...).eq("durum", old)` is a real compare-and-set;
 - every execute() runs under one lock, so the client stays consistent when requests call it
-  from several threads at once.
+  from several threads at once;
+- an optional `latency` (seconds) is slept before each query, outside the lock, to stand in for
+  the network round trip to the database in load measurements (scripts/load_test.py).
 
 It is not Postgres: there are no constraints, triggers, types or joins. Columns that a table
 defines with a default (see db/00_temel_sema.sql) get that default on insert only where the
@@ -18,6 +20,7 @@ tested code filters on them.
 import copy
 import re
 import threading
+import time
 import uuid
 from datetime import datetime
 
@@ -160,6 +163,8 @@ class _Query:
         return [row for row in rows if all(test(row) for test in self._filters)]
 
     def execute(self):
+        if self._db.latency:
+            time.sleep(self._db.latency)  # blocking, like the real synchronous client
         with self._db.lock:
             rows = self._db.tables.setdefault(self._table, [])
 
@@ -217,9 +222,10 @@ class _Query:
 class FakeSupabase:
     """Drop-in replacement for the `supabase` object in main.py."""
 
-    def __init__(self):
+    def __init__(self, latency=0.0):
         self.tables = {}
         self.lock = threading.RLock()
+        self.latency = latency
 
     def table(self, name):
         return _Query(self, name)
