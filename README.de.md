@@ -155,5 +155,5 @@ die die Arbeit weiterlaufen lässt, wenn im Feld die Verbindung abreißt, und de
 
 ## Lizenz
 
-Alle Rechte vorbehalten. Der Code ist zur Ansicht als Portfolio veröffentlicht; siehe `LICENSE`.
+Veröffentlicht unter der MIT-Lizenz; siehe `LICENSE`.
 Komponenten von Drittanbietern behalten ihre eigenen Lizenzen.
