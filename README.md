@@ -152,5 +152,4 @@ work going when the connection drops in the field, and the
 
 ## License
 
-All rights reserved. The code is published for viewing as a portfolio; see `LICENSE`. Third-party
-components keep their own licenses.
+Released under the MIT License; see `LICENSE`. Third-party components keep their own licenses.
